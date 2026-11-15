@@ -1,0 +1,241 @@
+@startuml
+title Class Diagram
+skinparam monochrome true
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam linetype ortho
+
+together {
+  package "Before: inherited lifecycle.py (procedural flag soup)" as Before {
+    class LifecycleModule <<module>> {
+      {static} ACTIONS : tuple
+      {static} snapshot(app) : dict
+      {static} apply_action(app, action) : dict
+      {static} derived_status_from_flags(app) : str
+    }
+    class InheritedApplication <<model>> {
+      id : int
+      listing_id : int
+      graduate_id : int
+      status : str
+      flag_reviewed : int
+      flag_shortlisted : int
+      flag_rejected : int
+      flag_hired : int
+    }
+    class TransitionApplication <<service>> {
+      + transition_application(actor_id, application_id, action)
+      ' actor role in {employer, admin}
+      ' no listing-owner check
+    }
+    LifecycleModule ..> InheritedApplication : mutates status **and** flags
+    TransitionApplication ..> InheritedApplication : persist flags
+    TransitionApplication ..> LifecycleModule : apply_action()
+    note right of LifecycleModule
+      Defects: nested if/elif; illegal jumps
+      (submitted->hired); flags not cleared;
+      reopen has no actor check and resets to
+      submitted; two readers disagree; silent
+      no-ops; no audit; no notify.
+    end note
+  }
+}
+
+package "After: State pattern (routes -> services -> repositories -> models)" as After {
+  abstract class ApplicationState {
+    + name() : str
+    + allowed_actions() : FrozenSet
+    + handle(action) : ApplicationState
+    + is_active() : bool
+  }
+
+  class SubmittedState {
+    + allowed_actions() : {mark_reviewed}
+    + handle(action) : ApplicationState  ' -> ReviewedState
+    + is_active() : bool  ' true
+  }
+  class ReviewedState {
+    + allowed_actions() : {shortlist}
+    + handle(action) : ApplicationState  ' -> ShortlistedState
+    + is_active() : bool  ' true
+  }
+  class ShortlistedState {
+    + allowed_actions() : {hire, reject}
+    + handle(action) : ApplicationState  ' -> HiredState | RejectedState
+    + is_active() : bool  ' true
+  }
+  class RejectedState {
+    + allowed_actions() : {reopen}
+    + handle(action) : ApplicationState  ' -> ReviewedState (admin)
+    + is_active() : bool  ' false
+  }
+  class HiredState {
+    + allowed_actions() : {}  ' terminal
+    + handle(action) : ApplicationState
+    + is_active() : bool  ' false
+  }
+
+  ApplicationState <|-- SubmittedState
+  ApplicationState <|-- ReviewedState
+  ApplicationState <|-- ShortlistedState
+  ApplicationState <|-- RejectedState
+  ApplicationState <|-- HiredState
+
+  ' The five concrete states above are drawn inside a group box labelled
+  ' "Concrete states" in class-diagram.png; they are the factory's products.
+
+  class Application <<model / context>> {
+    id : int
+    listing_id : int
+    graduate_id : int
+    cover_letter : str
+    resume_text : str
+    status : str  ' single source of truth; flags removed
+    + current_state() : ApplicationState
+    + apply(action) : str  ' thin: store handle(action) name
+    + is_active() : bool  ' derived from current state
+  }
+  Application "1" --> "1" ApplicationState : current state
+
+  class StateFactory <<factory>> {
+    + from_status(status) : ApplicationState
+  }
+  Application ..> StateFactory : current_state()
+  StateFactory ..> SubmittedState : <<create>>
+  StateFactory ..> ReviewedState : <<create>>
+  StateFactory ..> ShortlistedState : <<create>>
+  StateFactory ..> RejectedState : <<create>>
+  StateFactory ..> HiredState : <<create>>
+
+  class LifecycleService <<service>> {
+    + apply_transition(actor, application_id, action) : Application
+    + reopen(actor, application_id) : Application  ' admin only
+    - persist_status()
+    - record_history()
+    - notify_applicant()
+  }
+
+  class ListingOwnerPolicy <<service>> {
+    + can_advance(actor, listing) : bool
+    + can_read(actor, application) : bool
+    + can_list(actor, listing) : bool
+    ' employer only; not admin, not other employers
+    ' AC 12 covers advancing a lifecycle, not reopening
+  }
+
+  class ReopenPolicy <<service>> {
+    + can_reopen(actor) : bool
+    ' administrator only: staff correction
+    ' checked separately from the employer advance
+  }
+
+  class ApplicationService <<service>> {
+    + transition_application(actor_id, application_id, action)  ' delegates
+    + apply(...)  ' on-platform collect starts at submitted
+    + read_application(actor, application_id)
+    + list_applicants(actor, listing_id)
+    + my_active(graduate_id) : list
+    + my_history(graduate_id) : list
+  }
+
+  class ApplicationRepository <<repository>> {
+    + get(id) : Application
+    + save(app) : Application
+    + add_history(row) : ApplicationHistory
+  }
+
+  class ApplicationHistory <<model>> {
+    id : int
+    application_id : int
+    from_status : str
+    to_status : str
+    action : str
+    actor_id : int
+    occurred_at : datetime
+  }
+
+  class NotificationService <<service>> {
+    + notify_status_change(user_id, application, status)
+    - compose_text(status) : str
+    ' email primary; on-platform optional
+  }
+
+  class Notification <<model>> {
+    id : int
+    user_id : int
+    application_id : int
+    + status() : str  {from Application}  ' no stored copy
+    + text() : str  ' built from the derived status
+  }
+
+  enum NotificationChannel {
+    EMAIL
+    ON_PLATFORM
+  }
+
+  class BoardRouter <<route>> {
+    + POST /applications/{id}/transition
+    + POST /applications/{id}/reopen  ' admin only
+  }
+
+  class Listing <<model>> {
+    id : int
+    employer_id : int
+  }
+
+  class User <<model>> {
+    id : int
+    role : str
+  }
+
+  class IllegalTransitionError <<exception>>
+  class UnauthorizedTransitionError <<exception>>
+
+  BoardRouter ..> ApplicationService : transition
+  BoardRouter ..> LifecycleService : reopen
+  ApplicationService ..> LifecycleService : delegates
+  ApplicationService ..> ListingOwnerPolicy : ownership check
+  LifecycleService ..> ApplicationState : handle(action)
+  LifecycleService ..> Application : updates status
+  LifecycleService ..> ListingOwnerPolicy : authorize advance
+  LifecycleService ..> ReopenPolicy : authorize reopen
+  LifecycleService ..> ApplicationRepository : save
+  LifecycleService ..> ApplicationHistory : <<create>>
+  LifecycleService ..> NotificationService : notify
+  NotificationService ..> Notification : <<create>>
+  Notification "0..*" --> "1" NotificationChannel : channel
+  Application "1" --> "0..*" ApplicationHistory : history
+  Application "0..*" --> "1" Listing : listing
+  Application "0..*" --> "1" User : graduate
+  Listing "0..*" --> "1" User : employer
+  LifecycleService ..> IllegalTransitionError
+  LifecycleService ..> UnauthorizedTransitionError
+}
+
+note bottom of After
+  Legal transitions (strict chain, no jumps):
+  submitted --mark_reviewed--> reviewed
+  reviewed --shortlist--> shortlisted
+  shortlisted --hire--> hired
+  shortlisted --reject--> rejected
+  Admin reopen (staff correction): rejected --reopen--> reviewed
+  hired is terminal; submitted/reviewed/shortlisted have no reopen.
+  Each state implements handle(action) : ApplicationState.
+  HiredState.handle(action) raises IllegalTransitionError.
+  One status field only. is_active() is derived from the current state
+  (false for rejected/hired), so active list and history stay consistent.
+  History + applicant notification on each change.
+end note
+
+note right of ReopenPolicy
+  Reopen is not an advance: the listing employer
+  never reverses a rejection. AC 12 covers advancing
+  (mark_reviewed/shortlist/hire/reject) only, so the
+  administrator-only reopen is checked separately.
+  Notification text is built from status(), which is
+  derived from Application.status, so email, dashboard
+  and API show the same status; email is primary and
+  on-platform is optional.
+end note
+
+@enduml
