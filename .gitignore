@@ -215,3 +215,6 @@ docs/transcripts.zip
 # Node (mermaid-cli). package.json + package-lock.json are committed.
 node_modules/
 .migrate-backup/
+
+# Nathan Docs
+Nathan Folder/

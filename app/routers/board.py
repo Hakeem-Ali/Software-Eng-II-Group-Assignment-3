@@ -22,7 +22,7 @@ class ListingBody(BaseModel):
     title: str
     company: str
     description: str
-    apply_mode: str = Field(description="collect | external")
+    apply_mode: str = Field(description="external-link | on-platform-collect")
     deadline: str = Field(description="ISO date YYYY-MM-DD")
     external_url: str | None = None
     actor_id: int = Field(description="Acting user id (demo auth)")
@@ -143,6 +143,14 @@ def transition(application_id: int, body: TransitionBody) -> dict[str, Any]:
     result = applications.transition_application(
         body.actor_id, application_id, body.action
     )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error"))
+    return result
+
+
+@router.post("/applications/{application_id}/reopen")
+def reopen_application(application_id: int, body: ActorBody) -> dict[str, Any]:
+    result = applications.reopen_application(body.actor_id, application_id)
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error"))
     return result
