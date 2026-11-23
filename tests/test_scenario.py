@@ -47,7 +47,7 @@ def test_external_listing_cannot_collect_application():
             "actor_id": 2,
         },
     )
-    assert r.status_code == 400
+    assert r.status_code == 409
 
 
 def test_publishing_listing_twice_does_not_duplicate_notifications():
