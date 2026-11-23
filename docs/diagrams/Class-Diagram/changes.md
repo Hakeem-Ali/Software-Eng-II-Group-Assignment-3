@@ -142,3 +142,149 @@ an `Application → ApplicationRepository` link are untouched. Only `class-diagr
 - `StateFactory` and `UnauthorizedTransitionError` are exactly 20 px apart; the `Notification` box is 161 px tall and its bottom edge is 69 px above `NotificationChannel`.
 - Content still ends 78 px (before) and 64 px (after) above the panel bottom; the panel sizes, title and black-and-white style are unchanged.
 - Nothing outside `docs/diagrams/` was modified.
+
+## Revision 5 — alignment with the implemented State pattern
+
+This revision corrects the diagram to the code that is actually on `main`; it
+does not change any application source, test, configuration or requirement.
+Only `class-diagram.puml`, `class-diagram.py`, `class-diagram.png` and this
+file changed. The `Class Diagram` title, black-and-white style and
+Before/After panels are unchanged.
+
+| # | Change in the diagram | Code evidence |
+| --- | --- | --- |
+| 1 | Removed the invented `ApplicationRepository`, `LifecycleService`, `ApplicationService` and `NotificationService` classes and their dependencies. The After panel now shows the real modules `app.services.applications` and `app.services.lifecycle`, direct `Session(engine)` use, and inline creation of history and notification rows. | `app/services/applications.py:7-24` imports `Session`, `engine` and the real policies; `:49-196` opens sessions directly and has no repository/service classes. `app/database.py:25-32` defines `engine`. |
+| 2 | Restored `ReviewedState.allowed_actions() = {shortlist, reject}`. Both `reviewed --reject--> rejected` and `shortlisted --reject--> rejected` are now in the legal-transition note in `.puml`, `.py` and the PNG. | `app/models/application.py:65-77` returns both `SHORTLIST` and `REJECT`; `:80-92` allows `HIRE` and `REJECT`. `tests/test_unit.py:84-96` and `:118-130` exercise these paths. |
+| 3 | Corrected the exception story: concrete `handle()` methods, `StateFactory.from_status()` and `Application.apply()` raise `IllegalTransitionError`; the two false `throws` arrows to `UnauthorizedTransitionError` were removed and the exception box now states that it is defined but never raised. | `app/models/application.py:27-32` defines both exceptions; `:52-138` raises `IllegalTransitionError` in state handlers and the factory; `:157-164` raises it for an unknown action. `UnauthorizedTransitionError` has no `raise` site in the repository. |
+| 4 | Replaced the invented `Notification.status()` / `text()` design with the stored fields `id`, `user_id`, `application_id`, `listing_id`, `message`, `channel` and `created_at`. The note now says the message is built from the new status, `EMAIL` is the default and `ON_PLATFORM` is defined but unused. | `app/models/notification.py:8-24` defines the enum and all seven fields. `app/services/applications.py:41-46` builds `message` from `application.status` and always passes `NotificationChannel.EMAIL`. |
+| 5 | Layering and authorization now match the routes: `BoardRouter` delegates transition/reopen, `applications.py` checks `ListingOwnerPolicy` / `ReopenPolicy`, calls `row.apply(action)` and adds history plus notification; `lifecycle.apply_action()` and `derived_status_from_flags()` are labelled compatibility helpers, not the transition path. | `app/routers/board.py:141-156`; `app/services/applications.py:143-196`; `app/services/lifecycle.py:20-39` and `:42-59`. |
+| 6 | Layout fixes without design content: `current_state()` now uses a direct route to `StateFactory`, the `<<create>> notification` dependency starts at `applications.py`, the `throws` arrows start at the concrete-state group and factory, the `Session` / reopen arrow endpoints land on the real box edges, the five state boxes are exactly 20 px apart, and both notes moved up to keep at least 20 px from the panel and neighbouring boxes. | Layout only; no new class or relation beyond the code facts above. |
+
+### Verification of Revision 5
+
+- 26 class boxes, 5 notes, 35 labels and 140 connector segments.
+- **0 overlapping boxes**, **0 box gaps below 20 px**, **0 connectors passing through a box**, **0 labels overlapping box text, notes or other labels** and **0 panel-margin problems**.
+- `.puml`, `.py` and the regenerated PNG agree on the real modules, the five legal transitions plus admin-only reopen, the actual notification fields, the factory/state exceptions and the absence of the four invented service/repository classes.
+- `class-diagram.png` was regenerated with the repository's existing Windows GDI+ renderer; PlantUML is still not installed and nothing was installed.
+- Nothing outside `docs/diagrams/` was modified.
+
+## Revision 6 — transition-path-only code alignment
+
+This revision changes only `class-diagram.puml`, `class-diagram.py`,
+`class-diagram.png` and this file. The Before panel, the `Class Diagram`
+title and the monochrome style are unchanged. The After panel now shows only
+participants and calls on the implemented transition and reopen paths.
+
+| # | Change in the diagram | Code evidence |
+| --- | --- | --- |
+| 1 | Replaced the invented `BoardRouter` participant with the real `app.routers.board` module and drew the exact route paths and signatures `transition(application_id: int, body: TransitionBody) -> dict[str, Any]` and `reopen_application(application_id: int, body: ActorBody) -> dict[str, Any]`. | `app/routers/board.py:10-13` creates `router = APIRouter(...)`; `app/routers/board.py:31-32` and `:42-46` define `ActorBody` and `TransitionBody`; `app/routers/board.py:141-156` define both routes. There is no `BoardRouter` class. |
+| 2 | Narrowed the service row to `applications`, `board_auth`, `lifecycle` (`ACTIONS`), `ListingOwnerPolicy`, `ReopenPolicy` and `Session(engine)`, with the real transition/reopen function signatures and `_record_status_change()` signature. | `app/services/applications.py:7-24` imports the real collaborators; `app/services/applications.py:27-46` defines `_record_status_change()`; `app/services/applications.py:143-196` defines `transition_application()` and `reopen_application()`; `app/services/board_auth.py:34-37` defines `get_user()`; `app/services/lifecycle.py:13` defines `ACTIONS`; `app/services/lifecycle.py:42-59` defines the two policies; `app/database.py:25-32` defines `engine`. |
+| 3 | Corrected every enum-typed attribute in the After panel and added all five enum boxes with their real members: `ApplicationStatus`, `ApplicationAction`, `ApplyMode`, `ListingStatus` and `NotificationChannel`. | `app/models/application.py:11-24` defines the application enums; `app/models/application.py:141-177` types `Application.status`, `ApplicationHistory.from_status`, `.to_status` and `.action`; `app/models/listing.py:8-16` and `:25-28` type `Listing.apply_mode` and `Listing.status`; `app/models/notification.py:8-10` and `:19` type `Notification.channel`. |
+| 4 | Rebuilt the state section around the abstract `ApplicationState` and all five concrete states. The solid generalization edges keep the hollow triangle at the parent. The concrete boxes show `name()`, `allowed_actions()`, `handle()` and `is_active()`; `ReviewedState.allowed_actions()` explicitly contains both `SHORTLIST` and `REJECT`. | `app/models/application.py:35-49` defines the abstract interface; `app/models/application.py:52-62`, `:65-77`, `:80-92`, `:95-108` and `:111-122` define the five concrete states. `app/models/application.py:69-70` returns both `ApplicationAction.SHORTLIST` and `ApplicationAction.REJECT`. |
+| 5 | Rewrote the legal-transition note to the implemented edges only: `MARK_REVIEWED`, `SHORTLIST`, `REJECT` from both reviewed and shortlisted, `HIRE`, admin-only `REOPEN` to reviewed, terminal hired, and `IllegalTransitionError` for unknown or illegal inputs. | `app/models/application.py:59-62`, `:72-77`, `:87-92`, `:102-105`, `:118-119`, `:125-138` and `:157-164`. `tests/test_unit.py:93-130` and `:133-151` exercise these state outcomes. |
+| 6 | Replaced the old authorization wording with the implemented calls: `board_auth.get_user()`, `lifecycle.ACTIONS`, `ListingOwnerPolicy.can_advance()` requiring the employer role and matching `listing.employer_id`, and `ReopenPolicy.can_reopen()` requiring admin. | `app/services/applications.py:146-157` and `:173-175`; `app/services/board_auth.py:34-37`; `app/services/lifecycle.py:13` and `:42-59`. |
+| 7 | Drew audit and notification as rows created through `Session(engine)` by `_record_status_change()`, with `Notification.channel` set to `NotificationChannel.EMAIL`. | `app/services/applications.py:27-46`, `:152-169` and `:177-195`; `app/models/notification.py:8-10` and `:13-24`. |
+| 8 | Removed earlier After-panel content that is not on the transition/reopen path, and removed the related note wording, so the diagram no longer labels non-path material as part of the design. | `app/services/applications.py:143-196` calls only `get_user`, `ACTIONS`, the two policies, `Application.apply()`, `Session` and `_record_status_change()` on these paths. |
+| 9 | Moved the subtitle, compacted the applications service box, and rerouted the association, create and generalization connectors so all boxes keep at least 20 px separation and no connector crosses a box. | Layout only in `docs/diagrams/Class-Diagram/class-diagram.py:456-472` and `:593-1068`; no application code was changed. |
+| 10 | Regenerated the PNG from the updated renderer and rewrote the structural `.puml` After section so the source, renderer and image agree on the same participants, enums, states and transitions. | `docs/diagrams/Class-Diagram/class-diagram.py:593-1068`; `docs/diagrams/Class-Diagram/class-diagram.puml:47-end`. PlantUML is not installed, so the PNG came from the repository GDI+ renderer. |
+
+### Verification of Revision 6
+
+- `python -B` with `PYTHONDONTWRITEBYTECODE=1` parsed the renderer and regenerated
+  `class-diagram.png`; no packages were installed and no tests were run.
+- A temporary layout checker outside the repository measured 34 rectangles,
+  128 line segments and 247 text runs: **minimum box gap 20.0 px**, **0 gaps
+  below 20 px**, **0 boxes outside the After panel**, **0 connectors passing
+  through a box**, **0 text/text overlaps** and **0 text runs overflowing their
+  containing box**.
+- `.puml`, `.py` and the PNG agree: five enum boxes, typed enum attributes,
+  all five concrete states, both `REJECT` transitions from `ReviewedState`,
+  admin-only reopen to `ReviewedState`, and no non-path participants.
+- Nothing outside the four class-diagram files was modified.
+
+## Revision 7 — design-level enum and transition update
+
+Base: this revision restarts from the committed **design-level** version of
+`class-diagram.puml` and `class-diagram.py`, not the Revision 6 "as implemented"
+working-tree files. The base was read from git commit
+`244fbe7d9d5e8152527a8e56882808378b1304c9` (the files were last changed in
+`bc3eda34728fad7acad5d379063b26879032ff6e`). The Before panel, the abstract
+`ApplicationState` with solid generalization lines, the "Concrete states" group,
+the admin-only reopen, terminal Hired, both exceptions, the `Class Diagram`
+title and the black-and-white style are unchanged.
+
+| # | Change | What the diagram now shows |
+| --- | --- | --- |
+| 1 | Reviewed -> Rejected allowed | `ReviewedState.allowed_actions() = {shortlist, reject}`; `handle(action)` returns `ShortlistedState \| RejectedState`; the legal-transitions note gains `reviewed --reject--> rejected` and is retitled "Legal transitions, reopen rule and active vs history". |
+| 2 | Application status enum | New `<<enumeration>> ApplicationStatus` (`SUBMITTED`, `REVIEWED`, `SHORTLISTED`, `REJECTED`, `HIRED`). `Application.status`, `Application.apply(action)`, `ApplicationHistory.from_status` / `to_status`, `Notification.status()`, `NotificationService.notify_status_change(... status)`, `ApplicationState.name()` and `StateFactory.from_status(status)` use the enum; notes say the status is stored as `ApplicationStatus`. |
+| 3 | Listing status enum | New `<<enumeration>> ListingStatus` (`PENDING`, `PUBLISHED`, `UNPUBLISHED`) and `Listing.status : ListingStatus`. |
+| 4 | Notification channel enum attribute | `Notification.channel : NotificationChannel` is shown again; `NotificationChannel` keeps `EMAIL {primary}` and `ON_PLATFORM {optional}`. |
+| 5 | Enum links | All three enums are linked the same way: a short plain line labelled with the owning attribute (`status`, `status`, `channel`) to an adjacent enumeration box. |
+| 6 | Cosmetic apostrophes | Literal apostrophe separators in method and note text were replaced with ` - `; only genuine PlantUML comment lines still start with an apostrophe. |
+
+### Verification of Revision 7
+
+- `python -B` with `PYTHONDONTWRITEBYTECODE=1` regenerated `class-diagram.png`;
+  no packages were installed and no tests were run.
+- Inline checker over the renderer: **32 boxes**, **110 connector segments** and
+  **38 labels**; **minimum box gap 20.0 px**, **0 gaps below 20 px**,
+  **minimum panel margin 20.0 px**, **0 margins below 20 px**,
+  **0 connectors passing through a box**, **0 label/text overlaps**,
+  **0 label/label overlaps**, **0 label/border overlaps**,
+  **0 text runs overflowing their containing box**. Canvas is 3000 x 1820 px
+  and the minimum font size is 10 pt.
+- `.puml`, `.py` and the regenerated PNG agree on the six changes above.
+- Nothing outside the four class-diagram files was modified.
+
+## Revision 8 — enum check and Application association spacing
+
+This revision only spreads the three `Application` association lines in the
+renderer and moves each label beside its own line end. No class, method,
+relationship or enum name was changed. The `.puml` already carries the correct
+roles and multiplicities, so it needed no text edit for this layout-only fix;
+`class-diagram.py` was edited and `class-diagram.png` was regenerated with the
+repository's existing GDI+ renderer.
+
+### Enum name check (no diagram edits)
+
+| Enum | Diagram name and members | Code name and members | Match | Code evidence |
+| --- | --- | --- | --- | --- |
+| Application status | `ApplicationStatus` — `SUBMITTED`, `REVIEWED`, `SHORTLISTED`, `REJECTED`, `HIRED` (`class-diagram.puml:106-112`) | `ApplicationStatus` — `SUBMITTED="submitted"`, `REVIEWED="reviewed"`, `SHORTLISTED="shortlisted"`, `REJECTED="rejected"`, `HIRED="hired"` | Yes | `app/models/application.py:11-16` |
+| Listing status | `ListingStatus` — `PENDING`, `PUBLISHED`, `UNPUBLISHED` (`class-diagram.puml:202-206`) | `ListingStatus` — `PENDING="pending"`, `PUBLISHED="published"`, `UNPUBLISHED="unpublished"` | Yes | `app/models/listing.py:13-16` |
+| Notification channel | `NotificationChannel` — `EMAIL {primary}`, `ON_PLATFORM {optional}` (`class-diagram.puml:186-189`) | `NotificationChannel` — `EMAIL="EMAIL"`, `ON_PLATFORM="ON_PLATFORM"` | Yes (the braces are design annotations, not member names) | `app/models/notification.py:8-10` |
+| Application action | Not present as an enum box | `ApplicationAction` — `MARK_REVIEWED="mark_reviewed"`, `SHORTLIST="shortlist"`, `REJECT="reject"`, `HIRE="hire"`, `REOPEN="reopen"` | Not compared; left unchanged | `app/models/application.py:19-24` |
+| Apply mode | Not present as an enum box | `ApplyMode` — `EXTERNAL_LINK="external-link"`, `ON_PLATFORM_COLLECT="on-platform-collect"` | Not compared; left unchanged | `app/models/listing.py:8-10` |
+
+The typed fields still named by the diagram were checked against:
+`Application.status` (`app/models/application.py:147` and `:152`),
+`ApplicationHistory.from_status` / `to_status` / `action`
+(`app/models/application.py:173-175`), `Listing.apply_mode` and `Listing.status`
+(`app/models/listing.py:25` and `:28`), and `Notification.channel`
+(`app/models/notification.py:19`). Because the three diagram enum names and
+members match the code, no enumeration box and no attribute type was edited.
+`ApplicationAction` and `ApplyMode` exist in code but have no diagram enum box;
+adding boxes for them would change the design, so they are reported only.
+
+### Cosmetic fix
+
+| # | Change | Result |
+| --- | --- | --- |
+| 1 | Spread the source verticals | `ApplicationHistory`, `Listing` and `User` now leave `Application` at x = 1125, 1150 and 1175 px: **25 px** between adjacent lines. |
+| 2 | Spread the routed horizontals | The `Listing` and `User` lines turn at y = 1025 and 1000 px: **25 px** apart. The three lines have **0** mutual crossings. |
+| 3 | Label placement | `1` sits at the `Application` end of `history`; `0..*` and `history` sit at its `ApplicationHistory` end. `0..*` sits at the `Application` end of `listing`; `1` and `listing` sit at its `Listing` end. `0..*` sits at the `Application` end of `graduate`; `1` and `graduate` sit at its `User` end. No label crosses a connector or the `Concrete states` border. |
+| 4 | Consistency | The `.puml` semantics are unchanged, the `.py` layout was edited, and the `.png` was regenerated. |
+
+### Verification of Revision 8
+
+- `PYTHONDONTWRITEBYTECODE=1 python -B` regenerated `class-diagram.png` and ran
+  the inline layout checker; no packages were installed and no tests were run.
+- Canvas **3000 x 1820 px**; **32 boxes**, **110 connector segments** and
+  **38 labels**; **minimum box gap 20.0 px**, **0 gaps below 20 px**,
+  **minimum panel margin 20.0 px**, **0 margins below 20 px**,
+  **0 connectors passing through a box**, **0 label/text overlaps**,
+  **0 label/label overlaps**, **0 label/border overlaps**,
+  **0 text runs overflowing a box** and **minimum font 10 pt**.
+- The three `Application` source verticals are **25 px / 25 px** apart, the two
+  routed horizontals are **25 px** apart, and the nine moved labels have
+  **0 connector hits** and **0 group-border overlaps**.
+- Nothing outside the four class-diagram files was modified.

@@ -467,9 +467,9 @@ def render(path: Path) -> None:
 
     g.rectangle(20, 86, 740, 1704, width=1.6)
     g.rectangle(800, 86, 2180, 1704, width=1.6)
-    g.draw_text(36, 96, "Before: inherited structure (lifecycle.py)", 14, bold=True)
-    g.draw_text(816, 96, "After: State pattern redesign", 14, bold=True)
-    g.draw_text(816, 120, "routes -> services -> repositories -> models", 11)
+    g.draw_text(40, 106, "Before: inherited structure (lifecycle.py)", 14, bold=True)
+    g.draw_text(820, 106, "After: State pattern redesign", 14, bold=True)
+    g.draw_text(820, 130, "routes -> services -> repositories -> models", 11)
 
     # ---------------------------------------------------------------- BEFORE
     life = class_box(
@@ -601,7 +601,7 @@ def render(path: Path) -> None:
         [],
         [
             "+ POST /applications/{id}/transition",
-            "+ POST /applications/{id}/reopen  ' admin only",
+            "+ POST /applications/{id}/reopen  - admin only",
         ],
     )
     app_svc = class_box(
@@ -613,7 +613,7 @@ def render(path: Path) -> None:
         "<<service  app.services.applications>>",
         [],
         [
-            "+ transition_application(...)  ' delegates",
+            "+ transition_application(...)  - delegates",
             "+ apply(...) starts at SubmittedState",
             "+ read_application(actor, app_id)",
             "+ list_applicants(actor, listing_id)",
@@ -631,7 +631,7 @@ def render(path: Path) -> None:
         [],
         [
             "+ apply_transition(actor, app_id, action)",
-            "+ reopen(actor, app_id)  ' admin only",
+            "+ reopen(actor, app_id)  - admin only",
             "- persist_status()",
             "- record_history()",
             "- notify_applicant()",
@@ -671,20 +671,30 @@ def render(path: Path) -> None:
         g,
         2600,
         300,
-        330,
+        360,
         "NotificationService",
         "<<service>>",
         [],
         [
-            "+ notify_status_change(user_id, app, status)",
-            "- compose_text(status) : str",
+            "+ notify_status_change(user_id, app, status : ApplicationStatus)",
+            "- compose_text(status : ApplicationStatus) : str",
             "email primary; on-platform optional",
         ],
     )
 
-    app_new = class_box(
+    app_status = class_box(
         g,
         860,
+        550,
+        200,
+        "ApplicationStatus",
+        "<<enumeration>>",
+        ["SUBMITTED", "REVIEWED", "SHORTLISTED", "REJECTED", "HIRED"],
+        [],
+    )
+    app_new = class_box(
+        g,
+        1120,
         550,
         400,
         "Application",
@@ -695,24 +705,24 @@ def render(path: Path) -> None:
             "+ graduate_id : int",
             "+ cover_letter : str",
             "+ resume_text : str",
-            "+ status : str  {single source of truth}",
+            "+ status : ApplicationStatus  {single source of truth}",
         ],
         [
             "+ current_state() : ApplicationState",
-            "+ apply(action) : str  ' thin: store handle(action) name",
-            "+ is_active() : bool  ' derived from current state",
+            "+ apply(action) : ApplicationStatus - thin: store handle(action) name",
+            "+ is_active() : bool - derived from current state",
         ],
     )
     iface = class_box(
         g,
-        1360,
+        1620,
         550,
-        420,
+        340,
         "ApplicationState",
         "<<abstract>>",
         [],
         [
-            "+ name() : str",
+            "+ name() : ApplicationStatus",
             "+ allowed_actions() : FrozenSet[str]",
             "+ handle(action) : ApplicationState",
             "+ is_active() : bool",
@@ -720,9 +730,9 @@ def render(path: Path) -> None:
     )
     repo = class_box(
         g,
-        1800,
+        1980,
         550,
-        380,
+        260,
         "ApplicationRepository",
         "<<repository>>",
         [],
@@ -734,19 +744,19 @@ def render(path: Path) -> None:
     )
     factory = class_box(
         g,
-        2220,
+        2260,
         550,
         340,
         "StateFactory",
         "<<factory>>",
         [],
-        ["+ from_status(status) : ApplicationState"],
+        ["+ from_status(status : ApplicationStatus) : ApplicationState"],
     )
     unauth = class_box(
         g,
-        2580,
+        2620,
         550,
-        330,
+        260,
         "UnauthorizedTransitionError",
         "<<exception>>",
         [],
@@ -758,14 +768,14 @@ def render(path: Path) -> None:
     g.draw_text(1190, 816, "Concrete states", 11, bold=True)
     states = []
     state_data = [
-        ("SubmittedState", ["+ allowed_actions() : {mark_reviewed}", "+ handle(action) : ApplicationState", "' -> ReviewedState", "+ is_active() : bool  ' true"]),
-        ("ReviewedState", ["+ allowed_actions() : {shortlist}", "+ handle(action) : ApplicationState", "' -> ShortlistedState", "+ is_active() : bool  ' true"]),
-        ("ShortlistedState", ["+ allowed_actions() : {hire, reject}", "+ handle(action) : ApplicationState", "' -> HiredState | RejectedState", "+ is_active() : bool  ' true"]),
-        ("RejectedState", ["+ allowed_actions() : {reopen}", "+ handle(action) : ApplicationState", "' -> ReviewedState (admin)", "+ is_active() : bool  ' false"]),
-        ("HiredState", ["+ allowed_actions() : {}  ' terminal", "+ handle(action) : ApplicationState", "' raises IllegalTransitionError", "+ is_active() : bool  ' false"]),
+        ("SubmittedState", ["+ allowed_actions() : {mark_reviewed}", "+ handle(action) : ApplicationState", "- -> ReviewedState", "+ is_active() : bool  - true"]),
+        ("ReviewedState", ["+ allowed_actions() : {shortlist, reject}", "+ handle(action) : ApplicationState", "- -> ShortlistedState | RejectedState", "+ is_active() : bool  - true"]),
+        ("ShortlistedState", ["+ allowed_actions() : {hire, reject}", "+ handle(action) : ApplicationState", "- -> HiredState | RejectedState", "+ is_active() : bool  - true"]),
+        ("RejectedState", ["+ allowed_actions() : {reopen}", "+ handle(action) : ApplicationState", "- -> ReviewedState (admin)", "+ is_active() : bool  - false"]),
+        ("HiredState", ["+ allowed_actions() : {}  - terminal", "+ handle(action) : ApplicationState", "- raises IllegalTransitionError", "+ is_active() : bool  - false"]),
     ]
     for i, (name, methods) in enumerate(state_data):
-        states.append(class_box(g, 1215 + i * 338, 850, 320, name, None, [], methods))
+        states.append(class_box(g, 1200 + i * 340, 850, 320, name, None, [], methods))
     submitted, reviewed, shortlisted, rejected, hired = states
 
     hist = class_box(
@@ -778,8 +788,8 @@ def render(path: Path) -> None:
         [
             "+ id : int",
             "+ application_id : int",
-            "+ from_status : str",
-            "+ to_status : str",
+            "+ from_status : ApplicationStatus",
+            "+ to_status : ApplicationStatus",
             "+ action : str",
             "+ actor_id : int",
             "+ occurred_at : datetime",
@@ -793,7 +803,17 @@ def render(path: Path) -> None:
         260,
         "Listing",
         "<<model>>",
-        ["+ id : int", "+ employer_id : int"],
+        ["+ id : int", "+ employer_id : int", "+ status : ListingStatus"],
+        [],
+    )
+    listing_status = class_box(
+        g,
+        1260,
+        1190,
+        260,
+        "ListingStatus",
+        "<<enumeration>>",
+        ["PENDING", "PUBLISHED", "UNPUBLISHED"],
         [],
     )
     user = class_box(
@@ -817,10 +837,11 @@ def render(path: Path) -> None:
             "+ id : int",
             "+ user_id : int",
             "+ application_id : int",
+            "+ channel : NotificationChannel",
         ],
         [
-            "+ status() : str  {from Application}",
-            "+ text() : str  {built from status}",
+            "+ status() : ApplicationStatus  {from Application}",
+            "+ text() : str  - built from status",
         ],
     )
     ill = class_box(
@@ -876,21 +897,21 @@ def render(path: Path) -> None:
     )
     poly(
         g,
-        [(1460, 459), (1460, 520), (1550, 520), (1550, 550)],
+        [(1460, 459), (1460, 520), (1660, 520), (1660, 550)],
         "dep",
         "handle(action)",
         (1470, 504),
     )
     poly(
         g,
-        [(1320, 459), (1320, 500), (1040, 500), (1040, 550)],
+        [(1320, 459), (1320, 500), (1180, 500), (1180, 550)],
         "dep",
         "updates status",
-        (1080, 521),
+        (1115, 521),
     )
     poly(
         g,
-        [(1620, 459), (1620, 515), (1990, 515), (1990, 550)],
+        [(1620, 459), (1620, 515), (2060, 515), (2060, 550)],
         "dep",
         "save",
         (1700, 499),
@@ -929,53 +950,53 @@ def render(path: Path) -> None:
     poly(g, [(2400, 633), (2400, 810)], "create", "<<create>>", (2410, 700))
     poly(
         g,
-        [(1260, 760), (1790, 760), (1790, 690), (2250, 690), (2250, 633)],
+        [(1520, 760), (1790, 760), (1790, 690), (2400, 690), (2400, 633)],
         "dep",
         "current_state()",
-        (1285, 758),
+        (1530, 758),
     )
 
     # Application -> ApplicationState (plain association to the class edge)
     g.line(right(app_new)[0], 620, left(iface)[0], 620)
-    draw_label(g, 1261, 626, "current state")
-    draw_label(g, 1264, 596, "1")
-    draw_label(g, 1352, 596, "1")
+    draw_label(g, 1533, 626, "current state")
+    draw_label(g, 1528, 596, "1")
+    draw_label(g, 1604, 596, "1")
 
-    # Application associations with role names and multiplicities
-    g.line(900, 787, 900, 1030)
-    draw_label(g, 910, 900, "history")
-    draw_label(g, 905, 795, "1")
-    draw_label(g, 905, 1012, "0..*")
+    # enum links: short labelled lines to adjacent enumeration boxes
+    g.line(right(app_status)[0], 630, left(app_new)[0], 630)
+    draw_label(g, 1074, 610, "status")
+    g.line(cx(listing), bottom(listing)[1], cx(listing), top(listing_status)[1])
+    draw_label(g, 1400, 1160, "status")
+    g.line(cx(notif), bottom(notif)[1], cx(notif), top(channel)[1])
+    draw_label(g, 2160, 1228, "channel")
 
-    poly(
-        g,
-        [(1050, 787), (1050, 1015), (1390, 1015), (1390, 1030)],
-        "assoc",
-        "listing",
-        (1120, 999),
-    )
-    draw_label(g, 1055, 791, "0..*")
-    draw_label(g, 1395, 1012, "1")
+    # Application associations with role names and multiplicities.  The three
+    # source verticals are 25 px apart (1125 / 1150 / 1175); the two routed
+    # horizontals are also 25 px apart (1000 / 1025).  Each label sits beside
+    # its own connector end and clear of the concrete-state group.
+    g.line(1125, 787, 1125, 1030)
+    draw_label(g, 1095, 792, "1")
+    draw_label(g, 1055, 988, "history")
+    draw_label(g, 1095, 1012, "0..*")
 
-    poly(
-        g,
-        [(1150, 787), (1150, 1020), (1780, 1020), (1780, 1030)],
-        "assoc",
-        "graduate",
-        (1300, 1004),
-    )
-    draw_label(g, 1155, 791, "0..*")
-    draw_label(g, 1785, 1012, "1")
+    g.line(1150, 787, 1150, 1025)
+    g.line(1150, 1025, 1390, 1025)
+    g.line(1390, 1025, 1390, 1030)
+    draw_label(g, 1128, 812, "0..*")
+    draw_label(g, 1396, 1005, "1")
+    draw_label(g, 1415, 1005, "listing")
+
+    g.line(1175, 787, 1175, 1000)
+    g.line(1175, 1000, 1660, 1000)
+    g.line(1660, 1000, 1660, 1030)
+    draw_label(g, 1153, 832, "0..*")
+    draw_label(g, 1666, 1005, "1")
+    draw_label(g, 1682, 1005, "graduate")
 
     g.line(right(listing)[0], cy(listing), left(user)[0], cy(user))
-    draw_label(g, 1530, 1063, "employer")
-    draw_label(g, 1525, 1085, "0..*")
-    draw_label(g, 1625, 1085, "1")
-
-    g.line(cx(notif), bottom(notif)[1], cx(notif), top(channel)[1])
-    draw_label(g, 2105, 1196, "0..*")
-    draw_label(g, 2105, 1237, "1")
-    draw_label(g, 2160, 1215, "channel")
+    draw_label(g, 1540, 1063, "employer")
+    draw_label(g, 1540, 1100, "0..*")
+    draw_label(g, 1610, 1100, "1")
 
     # notification and exception dependencies
     poly(
@@ -987,7 +1008,7 @@ def render(path: Path) -> None:
     )
     poly(
         g,
-        [(2380, 421), (2380, 500), (2860, 500), (2860, 550)],
+        [(2380, 421), (2380, 500), (2700, 500), (2700, 550)],
         "dep",
         "throws",
         (2450, 484),
@@ -1010,17 +1031,19 @@ def render(path: Path) -> None:
         [
             "submitted --mark_reviewed--> reviewed",
             "reviewed --shortlist--> shortlisted",
+            "reviewed --reject--> rejected",
             "shortlisted --hire--> hired",
             "shortlisted --reject--> rejected",
             "Admin reopen: rejected --reopen--> reviewed (staff only)",
             "hired is terminal; submitted/reviewed/shortlisted have no reopen.",
             "Each state implements handle(action) : ApplicationState.",
             "HiredState.handle(action) raises IllegalTransitionError.",
-            "One status field only. is_active() is derived from the current",
-            "state (false for rejected/hired), keeping active list and history",
-            "consistent. History + applicant notification on each change.",
+            "One status field, stored as the ApplicationStatus enum.",
+            "is_active() is derived from the current state (false for rejected/hired),",
+            "keeping active list and history consistent.",
+            "History + applicant notification on each change.",
         ],
-        title="Legal transitions (strict chain), reopen and active vs history",
+        title="Legal transitions, reopen rule and active vs history",
     )
     note_box(
         g,
@@ -1028,15 +1051,16 @@ def render(path: Path) -> None:
         1460,
         1000,
         [
-            "One status field (AC 11): Application.status is the only persisted",
-            "label; State objects encode behaviour, not extra booleans.",
+            "One status field (AC 11): Application.status is stored as the",
+            "ApplicationStatus enum; State objects encode behaviour, not extra booleans.",
             "Advancing (AC 12): ListingOwnerPolicy \u2014 listing employer only,",
             "checked for transitions, reading an application, and listing applicants.",
             "Administrators may export packages, never advance a lifecycle.",
             "Reopen: ReopenPolicy.can_reopen(actor) \u2014 administrator only, checked",
             "separately from the employer advance check.",
-            "Notification: status() is derived from Application.status, so email,",
-            "dashboard and API agree; email primary, on-platform optional.",
+            "Notification: status() is derived from Application.status (the",
+            "ApplicationStatus enum), so email, dashboard and API agree; email is",
+            "primary and on-platform is optional.",
             "Audit: ApplicationHistory row on each successful handle().",
             "On-platform apply starts SubmittedState (AC 9).",
             "External-link listings never create an in-app Application (AC 13).",
