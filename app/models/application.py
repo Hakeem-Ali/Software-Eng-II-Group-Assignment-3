@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import FrozenSet, Optional
+from typing import FrozenSet, Mapping, Optional
 
 from sqlmodel import Field, SQLModel
 
@@ -37,13 +37,21 @@ class ApplicationState(ABC):
     def name(self) -> ApplicationStatus:
         raise NotImplementedError
 
+    @property
     @abstractmethod
-    def allowed_actions(self) -> FrozenSet[ApplicationAction]:
+    def transitions(self) -> Mapping[ApplicationAction, type[ApplicationState]]:
         raise NotImplementedError
 
-    @abstractmethod
-    def handle(self, action: ApplicationAction) -> "ApplicationState":
-        raise NotImplementedError
+    def allowed_actions(self) -> FrozenSet[ApplicationAction]:
+        return frozenset(self.transitions)
+
+    def handle(self, action: ApplicationAction) -> ApplicationState:
+        next_state = self.transitions.get(action)
+        if next_state is None:
+            raise IllegalTransitionError(
+                f"{action.value} is illegal from {self.name().value}"
+            )
+        return next_state()
 
     def is_active(self) -> bool:
         return True
@@ -53,56 +61,42 @@ class SubmittedState(ApplicationState):
     def name(self) -> ApplicationStatus:
         return ApplicationStatus.SUBMITTED
 
-    def allowed_actions(self) -> FrozenSet[ApplicationAction]:
-        return frozenset({ApplicationAction.MARK_REVIEWED})
-
-    def handle(self, action: ApplicationAction) -> ApplicationState:
-        if action == ApplicationAction.MARK_REVIEWED:
-            return ReviewedState()
-        raise IllegalTransitionError(f"{action} is illegal from submitted")
+    @property
+    def transitions(self) -> Mapping[ApplicationAction, type[ApplicationState]]:
+        return {ApplicationAction.MARK_REVIEWED: ReviewedState}
 
 
 class ReviewedState(ApplicationState):
     def name(self) -> ApplicationStatus:
         return ApplicationStatus.REVIEWED
 
-    def allowed_actions(self) -> FrozenSet[ApplicationAction]:
-        return frozenset({ApplicationAction.SHORTLIST, ApplicationAction.REJECT})
-
-    def handle(self, action: ApplicationAction) -> ApplicationState:
-        if action == ApplicationAction.SHORTLIST:
-            return ShortlistedState()
-        if action == ApplicationAction.REJECT:
-            return RejectedState()
-        raise IllegalTransitionError(f"{action} is illegal from reviewed")
+    @property
+    def transitions(self) -> Mapping[ApplicationAction, type[ApplicationState]]:
+        return {
+            ApplicationAction.SHORTLIST: ShortlistedState,
+            ApplicationAction.REJECT: RejectedState,
+        }
 
 
 class ShortlistedState(ApplicationState):
     def name(self) -> ApplicationStatus:
         return ApplicationStatus.SHORTLISTED
 
-    def allowed_actions(self) -> FrozenSet[ApplicationAction]:
-        return frozenset({ApplicationAction.HIRE, ApplicationAction.REJECT})
-
-    def handle(self, action: ApplicationAction) -> ApplicationState:
-        if action == ApplicationAction.HIRE:
-            return HiredState()
-        if action == ApplicationAction.REJECT:
-            return RejectedState()
-        raise IllegalTransitionError(f"{action} is illegal from shortlisted")
+    @property
+    def transitions(self) -> Mapping[ApplicationAction, type[ApplicationState]]:
+        return {
+            ApplicationAction.HIRE: HiredState,
+            ApplicationAction.REJECT: RejectedState,
+        }
 
 
 class RejectedState(ApplicationState):
     def name(self) -> ApplicationStatus:
         return ApplicationStatus.REJECTED
 
-    def allowed_actions(self) -> FrozenSet[ApplicationAction]:
-        return frozenset({ApplicationAction.REOPEN})
-
-    def handle(self, action: ApplicationAction) -> ApplicationState:
-        if action == ApplicationAction.REOPEN:
-            return ReviewedState()
-        raise IllegalTransitionError(f"{action} is illegal from rejected")
+    @property
+    def transitions(self) -> Mapping[ApplicationAction, type[ApplicationState]]:
+        return {ApplicationAction.REOPEN: ReviewedState}
 
     def is_active(self) -> bool:
         return False
@@ -112,11 +106,9 @@ class HiredState(ApplicationState):
     def name(self) -> ApplicationStatus:
         return ApplicationStatus.HIRED
 
-    def allowed_actions(self) -> FrozenSet[ApplicationAction]:
-        return frozenset()
-
-    def handle(self, action: ApplicationAction) -> ApplicationState:
-        raise IllegalTransitionError(f"{action} is illegal from terminal hired")
+    @property
+    def transitions(self) -> Mapping[ApplicationAction, type[ApplicationState]]:
+        return {}
 
     def is_active(self) -> bool:
         return False
@@ -154,14 +146,14 @@ class Application(SQLModel, table=True):
     def current_state(self) -> ApplicationState:
         return StateFactory.from_status(self.status)
 
-    def apply(self, action: str | ApplicationAction) -> str:
+    def apply(self, action: str | ApplicationAction) -> ApplicationStatus:
         try:
             parsed = ApplicationAction(action)
         except ValueError as exc:
             raise IllegalTransitionError(f"unknown application action {action!r}") from exc
         next_state = self.current_state().handle(parsed)
         self.status = next_state.name()
-        return str(next_state.name())
+        return next_state.name()
 
     def is_active(self) -> bool:
         return self.current_state().is_active()
