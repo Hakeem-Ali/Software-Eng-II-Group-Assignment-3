@@ -864,6 +864,16 @@ def render(path: Path) -> None:
         ["EMAIL  {primary}", "ON_PLATFORM  {optional}"],
         [],
     )
+    subscription = class_box(
+        g,
+        2340,
+        1260,
+        400,
+        "Subscription",
+        "<<model>>",
+        ["+ id : int", "+ graduate_id : int"],
+        [],
+    )
 
     # ------------------------------------------------------- AFTER relations
     vline(g, router, app_svc, "dep", "transition")
@@ -968,7 +978,9 @@ def render(path: Path) -> None:
     g.line(cx(listing), bottom(listing)[1], cx(listing), top(listing_status)[1])
     draw_label(g, 1400, 1160, "status")
     g.line(cx(notif), bottom(notif)[1], cx(notif), top(channel)[1])
+    draw_label(g, 2120, 1208, "1")
     draw_label(g, 2160, 1228, "channel")
+    draw_label(g, 2120, 1248, "1")
 
     # Application associations with role names and multiplicities.  The three
     # source verticals are 25 px apart (1125 / 1150 / 1175); the two routed
@@ -997,6 +1009,28 @@ def render(path: Path) -> None:
     draw_label(g, 1540, 1063, "employer")
     draw_label(g, 1540, 1100, "0..*")
     draw_label(g, 1610, 1100, "1")
+
+    # Notification.user_id is non-unique: many notifications per recipient.
+    g.line(left(notif)[0], cy(notif), 1950, cy(notif))
+    g.line(1950, cy(notif), 1950, cy(user))
+    g.line(1950, cy(user), right(user)[0], cy(user))
+    draw_label(g, 1954, 1125, "0..*")
+    draw_label(g, 1930, 1060, "recipient")
+    draw_label(g, 1926, 1095, "1")
+
+    # Subscription.graduate_id is unique: at most one subscription per User.
+    poly(
+        g,
+        [
+            bottom(subscription),
+            (cx(subscription), 1410),
+            (right(user)[0] - 60, 1410),
+            (right(user)[0] - 60, bottom(user)[1]),
+        ],
+    )
+    draw_label(g, 2548, 1368, "0..1")
+    draw_label(g, 2070, 1388, "graduate")
+    draw_label(g, 1890, 1155, "1")
 
     # notification and exception dependencies
     poly(
