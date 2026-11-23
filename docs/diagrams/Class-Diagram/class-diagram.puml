@@ -43,7 +43,7 @@ together {
 
 package "After: State pattern (routes -> services -> repositories -> models)" as After {
   abstract class ApplicationState {
-    + name() : str
+    + name() : ApplicationStatus
     + allowed_actions() : FrozenSet
     + handle(action) : ApplicationState
     + is_active() : bool
@@ -51,28 +51,33 @@ package "After: State pattern (routes -> services -> repositories -> models)" as
 
   class SubmittedState {
     + allowed_actions() : {mark_reviewed}
-    + handle(action) : ApplicationState  ' -> ReviewedState
-    + is_active() : bool  ' true
+    + handle(action) : ApplicationState
+    - -> ReviewedState
+    + is_active() : bool  - true
   }
   class ReviewedState {
-    + allowed_actions() : {shortlist}
-    + handle(action) : ApplicationState  ' -> ShortlistedState
-    + is_active() : bool  ' true
+    + allowed_actions() : {shortlist, reject}
+    + handle(action) : ApplicationState
+    - -> ShortlistedState | RejectedState
+    + is_active() : bool  - true
   }
   class ShortlistedState {
     + allowed_actions() : {hire, reject}
-    + handle(action) : ApplicationState  ' -> HiredState | RejectedState
-    + is_active() : bool  ' true
+    + handle(action) : ApplicationState
+    - -> HiredState | RejectedState
+    + is_active() : bool  - true
   }
   class RejectedState {
     + allowed_actions() : {reopen}
-    + handle(action) : ApplicationState  ' -> ReviewedState (admin)
-    + is_active() : bool  ' false
+    + handle(action) : ApplicationState
+    - -> ReviewedState (admin)
+    + is_active() : bool  - false
   }
   class HiredState {
-    + allowed_actions() : {}  ' terminal
+    + allowed_actions() : {}  - terminal
     + handle(action) : ApplicationState
-    + is_active() : bool  ' false
+    - raises IllegalTransitionError
+    + is_active() : bool  - false
   }
 
   ApplicationState <|-- SubmittedState
@@ -90,15 +95,24 @@ package "After: State pattern (routes -> services -> repositories -> models)" as
     graduate_id : int
     cover_letter : str
     resume_text : str
-    status : str  ' single source of truth; flags removed
+    status : ApplicationStatus  {single source of truth}
     + current_state() : ApplicationState
-    + apply(action) : str  ' thin: store handle(action) name
-    + is_active() : bool  ' derived from current state
+    + apply(action) : ApplicationStatus  - thin: store handle(action) name
+    + is_active() : bool  - derived from current state
   }
   Application "1" --> "1" ApplicationState : current state
+  Application "1" -- "1" ApplicationStatus : status
+
+  enum ApplicationStatus {
+    SUBMITTED
+    REVIEWED
+    SHORTLISTED
+    REJECTED
+    HIRED
+  }
 
   class StateFactory <<factory>> {
-    + from_status(status) : ApplicationState
+    + from_status(status : ApplicationStatus) : ApplicationState
   }
   Application ..> StateFactory : current_state()
   StateFactory ..> SubmittedState : <<create>>
@@ -109,7 +123,7 @@ package "After: State pattern (routes -> services -> repositories -> models)" as
 
   class LifecycleService <<service>> {
     + apply_transition(actor, application_id, action) : Application
-    + reopen(actor, application_id) : Application  ' admin only
+    + reopen(actor, application_id) : Application  - admin only
     - persist_status()
     - record_history()
     - notify_applicant()
@@ -130,8 +144,8 @@ package "After: State pattern (routes -> services -> repositories -> models)" as
   }
 
   class ApplicationService <<service>> {
-    + transition_application(actor_id, application_id, action)  ' delegates
-    + apply(...)  ' on-platform collect starts at submitted
+    + transition_application(actor_id, application_id, action)  - delegates
+    + apply(...)  - on-platform collect starts at submitted
     + read_application(actor, application_id)
     + list_applicants(actor, listing_id)
     + my_active(graduate_id) : list
@@ -147,16 +161,16 @@ package "After: State pattern (routes -> services -> repositories -> models)" as
   class ApplicationHistory <<model>> {
     id : int
     application_id : int
-    from_status : str
-    to_status : str
+    from_status : ApplicationStatus
+    to_status : ApplicationStatus
     action : str
     actor_id : int
     occurred_at : datetime
   }
 
   class NotificationService <<service>> {
-    + notify_status_change(user_id, application, status)
-    - compose_text(status) : str
+    + notify_status_change(user_id, application, status : ApplicationStatus)
+    - compose_text(status : ApplicationStatus) : str
     ' email primary; on-platform optional
   }
 
@@ -164,23 +178,31 @@ package "After: State pattern (routes -> services -> repositories -> models)" as
     id : int
     user_id : int
     application_id : int
-    + status() : str  {from Application}  ' no stored copy
-    + text() : str  ' built from the derived status
+    channel : NotificationChannel
+    + status() : ApplicationStatus  {from Application}  - no stored copy
+    + text() : str  - built from the derived status
   }
 
   enum NotificationChannel {
-    EMAIL
-    ON_PLATFORM
+    EMAIL {primary}
+    ON_PLATFORM {optional}
   }
 
   class BoardRouter <<route>> {
     + POST /applications/{id}/transition
-    + POST /applications/{id}/reopen  ' admin only
+    + POST /applications/{id}/reopen  - admin only
   }
 
   class Listing <<model>> {
     id : int
     employer_id : int
+    status : ListingStatus
+  }
+
+  enum ListingStatus {
+    PENDING
+    PUBLISHED
+    UNPUBLISHED
   }
 
   class User <<model>> {
@@ -203,27 +225,30 @@ package "After: State pattern (routes -> services -> repositories -> models)" as
   LifecycleService ..> ApplicationHistory : <<create>>
   LifecycleService ..> NotificationService : notify
   NotificationService ..> Notification : <<create>>
-  Notification "0..*" --> "1" NotificationChannel : channel
+  Notification "1" -- "1" NotificationChannel : channel
   Application "1" --> "0..*" ApplicationHistory : history
   Application "0..*" --> "1" Listing : listing
   Application "0..*" --> "1" User : graduate
   Listing "0..*" --> "1" User : employer
+  Listing "1" -- "1" ListingStatus : status
   LifecycleService ..> IllegalTransitionError
   LifecycleService ..> UnauthorizedTransitionError
 }
 
 note bottom of After
-  Legal transitions (strict chain, no jumps):
+  Legal transitions, reopen rule and active vs history:
   submitted --mark_reviewed--> reviewed
   reviewed --shortlist--> shortlisted
+  reviewed --reject--> rejected
   shortlisted --hire--> hired
   shortlisted --reject--> rejected
   Admin reopen (staff correction): rejected --reopen--> reviewed
   hired is terminal; submitted/reviewed/shortlisted have no reopen.
   Each state implements handle(action) : ApplicationState.
   HiredState.handle(action) raises IllegalTransitionError.
-  One status field only. is_active() is derived from the current state
-  (false for rejected/hired), so active list and history stay consistent.
+  One status field only, stored as the ApplicationStatus enum. is_active()
+  is derived from the current state (false for rejected/hired), so active
+  list and history stay consistent.
   History + applicant notification on each change.
 end note
 
@@ -233,9 +258,9 @@ note right of ReopenPolicy
   (mark_reviewed/shortlist/hire/reject) only, so the
   administrator-only reopen is checked separately.
   Notification text is built from status(), which is
-  derived from Application.status, so email, dashboard
-  and API show the same status; email is primary and
-  on-platform is optional.
+  derived from Application.status (the ApplicationStatus
+  enum), so email, dashboard and API show the same status;
+  email is primary and on-platform is optional.
 end note
 
 @enduml
