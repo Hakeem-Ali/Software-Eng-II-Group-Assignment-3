@@ -15,7 +15,7 @@ class Notification(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id", index=True)
     application_id: Optional[int] = Field(default=None, foreign_key="application.id", index=True)
     listing_id: Optional[int] = Field(default=None, foreign_key="listing.id", index=True)
-    message: str
+    text: str
     channel: NotificationChannel = Field(default=NotificationChannel.EMAIL)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

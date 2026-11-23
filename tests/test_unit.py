@@ -8,6 +8,7 @@ import pytest
 
 from app.models.application import (
     Application,
+    ApplicationAction,
     ApplicationStatus,
     IllegalTransitionError,
 )
@@ -90,7 +91,10 @@ def test_application_legal_transition_chain():
         status="submitted",
     )
 
-    assert application.apply("mark_reviewed") == "reviewed"
+    assert application.apply("mark_reviewed") is ApplicationStatus.REVIEWED
+    assert application.current_state().allowed_actions() == frozenset(
+        {ApplicationAction.SHORTLIST, ApplicationAction.REJECT}
+    )
     assert application.apply("shortlist") == "shortlisted"
     assert application.apply("reject") == "rejected"
     assert not application.is_active()
