@@ -288,3 +288,33 @@ adding boxes for them would change the design, so they are reported only.
   routed horizontals are **25 px** apart, and the nine moved labels have
   **0 connector hits** and **0 group-border overlaps**.
 - Nothing outside the four class-diagram files was modified.
+
+## Revision 9 — subscription model and notification multiplicities
+
+This revision adds the `Subscription` model and makes the notification
+multiplicities visible in the After panel. The Before panel, the state pattern,
+the `Class Diagram` title, the monochrome style and all unrelated classes and
+notes are unchanged. Only `class-diagram.puml`, `class-diagram.py`,
+`class-diagram.png` and this file changed.
+
+| # | Change | Evidence / result |
+| --- | --- | --- |
+| 1 | New `Subscription <<model>>` with `id : int` and `graduate_id : int` | `app/models/subscription.py:6-8` defines exactly those two fields. |
+| 2 | New `Subscription "0..1" --> "1" User : graduate` | `Subscription.graduate_id` is a unique FK (`app/models/subscription.py:8`) and `listings.subscribe()` rejects duplicates (`app/services/listings.py:24-28`), so at most one row exists per graduate. |
+| 3 | New `Notification "0..*" --> "1" User : recipient` | `Notification.user_id` is a non-unique FK (`app/models/notification.py:15`); all three creation sites set it (`app/services/applications.py:42`, `app/services/listings.py:107` and `:133`). |
+| 4 | `Notification` – `NotificationChannel` now shows its `1` / `1` multiplicities in the PNG | The `.puml` association already carried `1` / `1`; the renderer previously drew only the `channel` role label. |
+
+### Verification of Revision 9
+
+- `PYTHONDONTWRITEBYTECODE=1 python -B` regenerated `class-diagram.png`; no
+  packages were installed and no tests were run.
+- Inline checker over the renderer: canvas **3000 x 1820 px**, **28 boxes**,
+  **5 notes**, **116 connector segments** and **46 labels**; **minimum box gap
+  20.0 px**, **minimum panel margin 20.0 px**, **0 connectors passing through a
+  box**, **0 label/label overlaps** and **0 label/border overlaps**. The new
+  labels introduce **0 new label/text overlaps** and **0 new text overflows**
+  compared with the committed baseline.
+- `.puml`, `.py` and the regenerated PNG agree on the Subscription class, the
+  `0..1`/`1` graduate association, the `0..*`/`1` recipient association and the
+  `1`/`1` channel multiplicities.
+- Nothing outside the four class-diagram files was modified.

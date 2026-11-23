@@ -210,6 +210,11 @@ package "After: State pattern (routes -> services -> repositories -> models)" as
     role : str
   }
 
+  class Subscription <<model>> {
+    id : int
+    graduate_id : int
+  }
+
   class IllegalTransitionError <<exception>>
   class UnauthorizedTransitionError <<exception>>
 
@@ -226,9 +231,11 @@ package "After: State pattern (routes -> services -> repositories -> models)" as
   LifecycleService ..> NotificationService : notify
   NotificationService ..> Notification : <<create>>
   Notification "1" -- "1" NotificationChannel : channel
+  Notification "0..*" --> "1" User : recipient
   Application "1" --> "0..*" ApplicationHistory : history
   Application "0..*" --> "1" Listing : listing
   Application "0..*" --> "1" User : graduate
+  Subscription "0..1" --> "1" User : graduate
   Listing "0..*" --> "1" User : employer
   Listing "1" -- "1" ListingStatus : status
   LifecycleService ..> IllegalTransitionError
