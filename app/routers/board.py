@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.services import applications, listings
-from app.services import board_auth as auth
+from app.dependencies.services import (
+    get_application_service,
+    get_board_auth_service,
+    get_listing_service,
+)
+from app.services.applications import ApplicationService
+from app.services.board_auth import BoardAuthService
+from app.services.listings import ListingService
 
 router = APIRouter(tags=["job-board"])
 
@@ -89,7 +95,10 @@ class TransitionBody(BaseModel):
 
 
 @router.post("/auth/login")
-def login(body: LoginBody) -> dict[str, Any]:
+def login(
+    body: LoginBody,
+    auth: BoardAuthService = Depends(get_board_auth_service),
+) -> dict[str, Any]:
     user = auth.login(body.email, body.password)
     if not user:
         raise HTTPException(status_code=401, detail="invalid credentials")
@@ -97,29 +106,41 @@ def login(body: LoginBody) -> dict[str, Any]:
 
 
 @router.post("/graduates/subscribe")
-def subscribe(body: ActorBody) -> dict[str, Any]:
-    result = listings.subscribe(body.actor_id)
+def subscribe(
+    body: ActorBody,
+    service: ListingService = Depends(get_listing_service),
+) -> dict[str, Any]:
+    result = service.subscribe(body.actor_id)
     if not result.get("ok"):
         raise _fail(result)
     return result
 
 
 @router.get("/jobs")
-def jobs() -> dict[str, Any]:
-    return {"jobs": listings.list_jobs_for_graduates()}
+def jobs(
+    service: ListingService = Depends(get_listing_service),
+) -> dict[str, Any]:
+    return {"jobs": service.list_jobs_for_graduates()}
 
 
 @router.get("/admin/listings/pending")
-def pending(actor_id: int) -> dict[str, Any]:
+def pending(
+    actor_id: int,
+    auth: BoardAuthService = Depends(get_board_auth_service),
+    service: ListingService = Depends(get_listing_service),
+) -> dict[str, Any]:
     actor = auth.get_user(actor_id)
     if not actor or actor["role"] != "admin":
         raise HTTPException(status_code=403, detail="admin only")
-    return {"listings": listings.list_pending_for_admin()}
+    return {"listings": service.list_pending_for_admin()}
 
 
 @router.post("/employer/listings", status_code=201)
-def submit_listing(body: ListingBody) -> dict[str, Any]:
-    result = listings.submit_listing(
+def submit_listing(
+    body: ListingBody,
+    service: ListingService = Depends(get_listing_service),
+) -> dict[str, Any]:
+    result = service.submit_listing(
         body.actor_id,
         body.title,
         body.company,
@@ -134,24 +155,35 @@ def submit_listing(body: ListingBody) -> dict[str, Any]:
 
 
 @router.post("/admin/listings/{listing_id}/publish")
-def publish(listing_id: int, body: ActorBody) -> dict[str, Any]:
-    result = listings.publish_listing(body.actor_id, listing_id)
+def publish(
+    listing_id: int,
+    body: ActorBody,
+    service: ListingService = Depends(get_listing_service),
+) -> dict[str, Any]:
+    result = service.publish_listing(body.actor_id, listing_id)
     if not result.get("ok"):
         raise _fail(result)
     return result
 
 
 @router.post("/admin/listings/{listing_id}/notify")
-def notify(listing_id: int, body: ActorBody) -> dict[str, Any]:
-    result = listings.notify_subscribers(body.actor_id, listing_id)
+def notify(
+    listing_id: int,
+    body: ActorBody,
+    service: ListingService = Depends(get_listing_service),
+) -> dict[str, Any]:
+    result = service.notify_subscribers(body.actor_id, listing_id)
     if not result.get("ok"):
         raise _fail(result)
     return result
 
 
 @router.post("/graduates/applications", status_code=201)
-def apply(body: ApplyBody) -> dict[str, Any]:
-    result = applications.apply(
+def apply(
+    body: ApplyBody,
+    service: ApplicationService = Depends(get_application_service),
+) -> dict[str, Any]:
+    result = service.apply(
         body.actor_id, body.listing_id, body.cover_letter, body.resume_text
     )
     if not result.get("ok"):
@@ -160,29 +192,44 @@ def apply(body: ApplyBody) -> dict[str, Any]:
 
 
 @router.get("/graduates/applications")
-def my_apps(actor_id: int) -> dict[str, Any]:
-    return {"applications": applications.my_applications(actor_id)}
+def my_apps(
+    actor_id: int,
+    service: ApplicationService = Depends(get_application_service),
+) -> dict[str, Any]:
+    return {"applications": service.my_applications(actor_id)}
 
 
 @router.get("/listings/{listing_id}/applicants")
-def applicants(listing_id: int, actor_id: int) -> dict[str, Any]:
-    result = applications.listing_applicants(actor_id, listing_id)
+def applicants(
+    listing_id: int,
+    actor_id: int,
+    service: ApplicationService = Depends(get_application_service),
+) -> dict[str, Any]:
+    result = service.listing_applicants(actor_id, listing_id)
     if not result.get("ok"):
         raise _fail(result)
     return result
 
 
 @router.get("/admin/listings/{listing_id}/export")
-def export(listing_id: int, actor_id: int) -> dict[str, Any]:
-    result = applications.export_applicants(actor_id, listing_id)
+def export(
+    listing_id: int,
+    actor_id: int,
+    service: ApplicationService = Depends(get_application_service),
+) -> dict[str, Any]:
+    result = service.export_applicants(actor_id, listing_id)
     if not result.get("ok"):
         raise _fail(result)
     return result
 
 
 @router.post("/applications/{application_id}/transition")
-def transition(application_id: int, body: TransitionBody) -> dict[str, Any]:
-    result = applications.transition_application(
+def transition(
+    application_id: int,
+    body: TransitionBody,
+    service: ApplicationService = Depends(get_application_service),
+) -> dict[str, Any]:
+    result = service.transition_application(
         body.actor_id, application_id, body.action
     )
     if not result.get("ok"):
@@ -191,8 +238,12 @@ def transition(application_id: int, body: TransitionBody) -> dict[str, Any]:
 
 
 @router.post("/applications/{application_id}/reopen")
-def reopen_application(application_id: int, body: ActorBody) -> dict[str, Any]:
-    result = applications.reopen_application(body.actor_id, application_id)
+def reopen_application(
+    application_id: int,
+    body: ActorBody,
+    service: ApplicationService = Depends(get_application_service),
+) -> dict[str, Any]:
+    result = service.reopen_application(body.actor_id, application_id)
     if not result.get("ok"):
         raise _fail(result)
     return result

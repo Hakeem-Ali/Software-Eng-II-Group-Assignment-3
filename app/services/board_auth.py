@@ -1,37 +1,32 @@
-"""Scenario auth helpers (email login + public user dicts)."""
+"""Scenario authentication use cases backed by injected user persistence."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from sqlmodel import Session, select
-
-from app.database import engine
 from app.models.user import User
+from app.repositories.user import UserRepository
 from app.utilities.security import verify_password
 
 
-def public_user(user: User | dict | None) -> dict[str, Any] | None:
+def public_user(user: User | dict[str, Any] | None) -> dict[str, Any] | None:
     if user is None:
         return None
-    if isinstance(user, dict):
-        data = dict(user)
-    else:
-        data = user.model_dump()
+    data = user.model_dump() if isinstance(user, User) else dict(user)
     data.pop("password", None)
     data.pop("password_hash", None)
     return data
 
 
-def login(email: str, password: str) -> dict[str, Any] | None:
-    with Session(engine) as session:
-        user = session.exec(select(User).where(User.email == email)).one_or_none()
+class BoardAuthService:
+    def __init__(self, users: UserRepository):
+        self.users = users
+
+    def login(self, email: str, password: str) -> dict[str, Any] | None:
+        user = self.users.get_by_email(email)
         if user is None or not verify_password(password, user.password):
             return None
         return public_user(user)
 
-
-def get_user(user_id: int) -> dict[str, Any] | None:
-    with Session(engine) as session:
-        user = session.get(User, user_id)
-        return public_user(user)
+    def get_user(self, user_id: int) -> dict[str, Any] | None:
+        return public_user(self.users.get_by_id(user_id))

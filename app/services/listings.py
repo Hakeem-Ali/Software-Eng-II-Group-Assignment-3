@@ -4,71 +4,81 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlmodel import Session, select
-
-from app.database import engine
-from app.models.listing import ApplyMode, Listing
+from app.models.listing import ApplyMode, Listing, ListingStatus
 from app.models.notification import Notification, NotificationChannel
 from app.models.subscription import Subscription
-from app.models.user import User
-from app.services.board_auth import get_user
+from app.repositories.listing import ListingRepository
+from app.repositories.notification import NotificationRepository
+from app.repositories.subscription import SubscriptionRepository
+from app.repositories.unit_of_work import UnitOfWork
+from app.repositories.user import UserRepository
 
 
-def subscribe(graduate_id: int) -> dict[str, Any]:
-    with Session(engine) as session:
-        graduate = session.get(User, graduate_id)
+class ListingService:
+    def __init__(
+        self,
+        listings: ListingRepository,
+        subscriptions: SubscriptionRepository,
+        notifications: NotificationRepository,
+        users: UserRepository,
+        unit_of_work: UnitOfWork,
+    ):
+        self.listings = listings
+        self.subscriptions = subscriptions
+        self.notifications = notifications
+        self.users = users
+        self.unit_of_work = unit_of_work
+
+    def subscribe(self, graduate_id: int) -> dict[str, Any]:
+        graduate = self.users.get_by_id(graduate_id)
         if graduate is None or graduate.role != "graduate":
             return {"ok": False, "error": "graduates only"}
         if not graduate.is_eligible_graduate():
             return {"ok": False, "error": "only DCIT graduates may subscribe"}
-        existing = session.exec(
-            select(Subscription).where(Subscription.graduate_id == graduate_id)
-        ).one_or_none()
-        if existing is None:
-            session.add(Subscription(graduate_id=graduate_id))
-            session.commit()
-    return {"ok": True}
 
+        if self.subscriptions.get_for_graduate(graduate_id) is None:
+            self.subscriptions.save(Subscription(graduate_id=graduate_id))
+            self.unit_of_work.commit()
+        return {"ok": True}
 
-def list_jobs_for_graduates() -> list[dict[str, Any]]:
-    with Session(engine) as session:
-        rows = session.exec(select(Listing).order_by(Listing.id)).all()
-        return [row.model_dump() for row in rows if row.is_published_and_live()]
+    def list_jobs_for_graduates(self) -> list[dict[str, Any]]:
+        return [
+            listing.model_dump()
+            for listing in self.listings.for_graduates()
+            if listing.is_published_and_live()
+        ]
 
+    def list_pending_for_admin(self) -> list[dict[str, Any]]:
+        return [
+            listing.model_dump()
+            for listing in self.listings.pending_for_admin()
+        ]
 
-def list_pending_for_admin() -> list[dict[str, Any]]:
-    with Session(engine) as session:
-        rows = session.exec(
-            select(Listing).where(Listing.status == "pending").order_by(Listing.id)
-        ).all()
-        return [row.model_dump() for row in rows]
+    def submit_listing(
+        self,
+        employer_id: int,
+        title: str,
+        company: str,
+        description: str,
+        apply_mode: str,
+        deadline: str,
+        external_url: str | None = None,
+    ) -> dict[str, Any]:
+        employer = self.users.get_by_id(employer_id)
+        if employer is None or employer.role != "employer":
+            return {"ok": False, "error": "employers only"}
+        try:
+            canonical_mode = ApplyMode(apply_mode)
+        except ValueError:
+            return {
+                "ok": False,
+                "error": "apply_mode must be external-link|on-platform-collect",
+            }
+        if canonical_mode == ApplyMode.EXTERNAL_LINK and not external_url:
+            return {"ok": False, "error": "external_url required"}
+        if canonical_mode == ApplyMode.ON_PLATFORM_COLLECT:
+            external_url = None
 
-
-def submit_listing(
-    employer_id: int,
-    title: str,
-    company: str,
-    description: str,
-    apply_mode: str,
-    deadline: str,
-    external_url: str | None = None,
-) -> dict[str, Any]:
-    user = get_user(employer_id)
-    if not user or user["role"] != "employer":
-        return {"ok": False, "error": "employers only"}
-    try:
-        canonical_mode = ApplyMode(apply_mode)
-    except ValueError:
-        return {
-            "ok": False,
-            "error": "apply_mode must be external-link|on-platform-collect",
-        }
-    if canonical_mode == ApplyMode.EXTERNAL_LINK and not external_url:
-        return {"ok": False, "error": "external_url required"}
-    if canonical_mode == ApplyMode.ON_PLATFORM_COLLECT:
-        external_url = None
-
-    with Session(engine) as session:
         listing = Listing(
             employer_id=employer_id,
             title=title,
@@ -77,64 +87,62 @@ def submit_listing(
             apply_mode=canonical_mode,
             external_url=external_url,
             deadline=deadline,
-            status="pending",
+            status=ListingStatus.PENDING,
         )
-        session.add(listing)
-        session.commit()
-        session.refresh(listing)
-        return {"ok": True, "listing_id": listing.id, "status": "pending"}
+        self.listings.save(listing)
+        self.unit_of_work.commit()
+        return {
+            "ok": True,
+            "listing_id": listing.id,
+            "status": str(listing.status),
+        }
 
+    def _create_listing_notifications(self, listing: Listing) -> int:
+        subscriptions = self.subscriptions.all()
+        graduate_ids = {subscription.graduate_id for subscription in subscriptions}
+        graduates = [
+            graduate
+            for graduate in self.users.get_by_ids(graduate_ids)
+            if graduate.is_eligible_graduate() and graduate.id in graduate_ids
+        ]
+        notifications = [
+            Notification(
+                user_id=graduate.id,
+                listing_id=listing.id,
+                message=f"New job published: {listing.title} at {listing.company}",
+                channel=NotificationChannel.EMAIL,
+            )
+            for graduate in graduates
+        ]
+        self.notifications.add_many(notifications)
+        return len(notifications)
 
-def publish_listing(admin_id: int, listing_id: int) -> dict[str, Any]:
-    admin = get_user(admin_id)
-    if not admin or admin["role"] != "admin":
-        return {"ok": False, "error": "admin only"}
-    with Session(engine) as session:
-        listing = session.get(Listing, listing_id)
+    def publish_listing(self, admin_id: int, listing_id: int) -> dict[str, Any]:
+        admin = self.users.get_by_id(admin_id)
+        if admin is None or admin.role != "admin":
+            return {"ok": False, "error": "admin only"}
+        listing = self.listings.get(listing_id)
         if listing is None:
             return {"ok": False, "error": "listing not found"}
-        if listing.status == "published":
+        if listing.status == ListingStatus.PUBLISHED:
             return {"ok": True, "notified": 0, "count": 0}
         listing.publish()
-        session.add(listing)
+        self.listings.save(listing)
         count = 0
         if listing.apply_mode == ApplyMode.ON_PLATFORM_COLLECT:
-            subscriptions = session.exec(select(Subscription)).all()
-            for subscription in subscriptions:
-                graduate = session.get(User, subscription.graduate_id)
-                if graduate is not None and graduate.is_eligible_graduate():
-                    session.add(Notification(
-                        user_id=subscription.graduate_id,
-                        listing_id=listing.id,
-                        message=f"New job published: {listing.title} at {listing.company}",
-                        channel=NotificationChannel.EMAIL,
-                    ))
-                    count += 1
-        session.commit()
+            count = self._create_listing_notifications(listing)
+        self.unit_of_work.commit()
         return {"ok": True, "notified": count, "count": count}
 
-
-def notify_subscribers(admin_id: int, listing_id: int) -> dict[str, Any]:
-    admin = get_user(admin_id)
-    if not admin or admin["role"] != "admin":
-        return {"ok": False, "error": "admin only"}
-    with Session(engine) as session:
-        listing = session.get(Listing, listing_id)
-        if listing is None or listing.status != "published":
+    def notify_subscribers(self, admin_id: int, listing_id: int) -> dict[str, Any]:
+        admin = self.users.get_by_id(admin_id)
+        if admin is None or admin.role != "admin":
+            return {"ok": False, "error": "admin only"}
+        listing = self.listings.get(listing_id)
+        if listing is None or listing.status != ListingStatus.PUBLISHED:
             return {"ok": False, "error": "listing not found or unpublished"}
         if listing.apply_mode == ApplyMode.EXTERNAL_LINK:
             return {"ok": True, "count": 0}
-        subscriptions = session.exec(select(Subscription)).all()
-        count = 0
-        for subscription in subscriptions:
-            graduate = session.get(User, subscription.graduate_id)
-            if graduate is not None and graduate.is_eligible_graduate():
-                session.add(Notification(
-                    user_id=subscription.graduate_id,
-                    listing_id=listing.id,
-                    message=f"New job published: {listing.title} at {listing.company}",
-                    channel=NotificationChannel.EMAIL,
-                ))
-                count += 1
-        session.commit()
+        count = self._create_listing_notifications(listing)
+        self.unit_of_work.commit()
         return {"ok": True, "count": count}

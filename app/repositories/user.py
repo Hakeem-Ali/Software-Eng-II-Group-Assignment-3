@@ -47,6 +47,11 @@ class UserRepository:
     def get_by_id(self, user_id: int) -> Optional[User]:
         return self.db.get(User, user_id)
 
+    def get_by_ids(self, user_ids: set[int]) -> list[User]:
+        if not user_ids:
+            return []
+        return self.db.exec(select(User).where(User.id.in_(user_ids))).all()
+
     def get_all_users(self) -> list[User]:
         return self.db.exec(select(User)).all()
 
