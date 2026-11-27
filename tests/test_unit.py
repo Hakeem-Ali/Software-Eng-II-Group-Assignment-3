@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import jwt
 
@@ -12,10 +13,46 @@ from app.models.application import (
     ApplicationStatus,
     IllegalTransitionError,
 )
-from app.models.listing import ApplyMode, Listing
+from app.models.listing import ApplyMode, Listing, ListingStatus
 from app.models.user import User
 from app.repositories.listing import ListingRepository
+from app.services.listings import ListingService
 from app.services.lifecycle import ListingOwnerPolicy
+
+
+@pytest.mark.parametrize(
+    "status",
+    [ListingStatus.DENIED, ListingStatus.UNPUBLISHED],
+)
+def test_publish_listing_returns_error_for_non_pending_listing(status):
+    listing = Listing(
+        employer_id=2,
+        title="Junior Developer",
+        company="Test Company",
+        description="Test listing",
+        apply_mode=ApplyMode.ON_PLATFORM_COLLECT,
+        deadline="2099-12-31",
+        status=status,
+    )
+    users = Mock()
+    users.get_by_id.return_value = SimpleNamespace(role="admin")
+    listings = Mock()
+    listings.get.return_value = listing
+    service = ListingService(
+        listings=listings,
+        subscriptions=Mock(),
+        notifications=Mock(),
+        users=users,
+        unit_of_work=Mock(),
+    )
+
+    result = service.publish_listing(admin_id=1, listing_id=3)
+
+    assert result == {
+        "ok": False,
+        "error": f"cannot publish listing with status {status}",
+    }
+    listings.save.assert_not_called()
 
 
 def test_password_hash_round_trip_and_rejects_wrong_password():

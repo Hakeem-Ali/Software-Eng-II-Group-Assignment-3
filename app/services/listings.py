@@ -160,7 +160,10 @@ class ListingService:
             return {"ok": False, "error": "listing not found"}
         if listing.status == ListingStatus.PUBLISHED:
             return {"ok": True, "notified": 0, "count": 0}
-        listing.publish()
+        try:
+            listing.publish()
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
         self.listings.save(listing)
         count = 0
         if listing.apply_mode == ApplyMode.ON_PLATFORM_COLLECT:
