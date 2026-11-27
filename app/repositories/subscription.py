@@ -21,3 +21,11 @@ class SubscriptionRepository:
         self.db.add(subscription)
         self.db.flush()
         return subscription
+
+    def delete_for_graduate(self, graduate_id: int) -> bool:
+        subscription = self.get_for_graduate(graduate_id)
+        if subscription is None:
+            return False
+        self.db.delete(subscription)
+        self.db.flush()
+        return True

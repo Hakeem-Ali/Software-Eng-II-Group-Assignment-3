@@ -14,6 +14,7 @@ class ListingStatus(StrEnum):
     PENDING = "pending"
     PUBLISHED = "published"
     UNPUBLISHED = "unpublished"
+    DENIED = "denied"
 
 
 class Listing(SQLModel, table=True):
@@ -37,8 +38,20 @@ class Listing(SQLModel, table=True):
     def publish(self) -> None:
         if self.status == ListingStatus.PUBLISHED:
             return
+        if self.status != ListingStatus.PENDING:
+            raise ValueError(f"cannot publish listing with status {self.status}")
         self.status = ListingStatus.PUBLISHED
         self.published_at = datetime.now(timezone.utc)
+
+    def deny(self) -> None:
+        if self.status != ListingStatus.PENDING:
+            raise ValueError(f"cannot deny listing with status {self.status}")
+        self.status = ListingStatus.DENIED
+
+    def unpublish(self) -> None:
+        if self.status != ListingStatus.PUBLISHED:
+            raise ValueError(f"cannot unpublish listing with status {self.status}")
+        self.status = ListingStatus.UNPUBLISHED
 
     def is_published_and_live(self, now: datetime | None = None) -> bool:
         if self.status != ListingStatus.PUBLISHED:

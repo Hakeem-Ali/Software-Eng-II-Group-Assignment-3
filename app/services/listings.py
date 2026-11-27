@@ -41,6 +41,17 @@ class ListingService:
             self.unit_of_work.commit()
         return {"ok": True}
 
+    def unsubscribe(self, graduate_id: int) -> dict[str, Any]:
+        graduate = self.users.get_by_id(graduate_id)
+        if graduate is None:
+            return {"ok": False, "error": "user not found"}
+        if graduate.role != "graduate":
+            return {"ok": False, "error": "graduates only"}
+        if not self.subscriptions.delete_for_graduate(graduate_id):
+            return {"ok": False, "error": "subscription not found"}
+        self.unit_of_work.commit()
+        return {"ok": True}
+
     def list_jobs_for_graduates(self) -> list[dict[str, Any]]:
         return [
             listing.model_dump()
@@ -53,6 +64,29 @@ class ListingService:
             listing.model_dump()
             for listing in self.listings.pending_for_admin()
         ]
+
+    def employer_listings(self, employer_id: int) -> dict[str, Any]:
+        employer = self.users.get_by_id(employer_id)
+        if employer is None or employer.role != "employer":
+            return {"ok": False, "error": "employers only"}
+        return {
+            "ok": True,
+            "listings": [
+                listing.model_dump()
+                for listing in self.listings.for_employer(employer_id)
+            ],
+        }
+
+    def get_job(self, actor_id: int, listing_id: int) -> dict[str, Any]:
+        actor = self.users.get_by_id(actor_id)
+        if actor is None:
+            return {"ok": False, "error": "unknown user"}
+        listing = self.listings.get(listing_id)
+        if listing is None:
+            return {"ok": False, "error": "listing not found"}
+        if listing.status != ListingStatus.PUBLISHED or not listing.is_published_and_live():
+            return {"ok": False, "error": "listing not found"}
+        return {"ok": True, "listing": listing.model_dump()}
 
     def submit_listing(
         self,
@@ -109,7 +143,7 @@ class ListingService:
             Notification(
                 user_id=graduate.id,
                 listing_id=listing.id,
-                message=f"New job published: {listing.title} at {listing.company}",
+                text=f"New job published: {listing.title} at {listing.company}",
                 channel=NotificationChannel.EMAIL,
             )
             for graduate in graduates
@@ -133,6 +167,36 @@ class ListingService:
             count = self._create_listing_notifications(listing)
         self.unit_of_work.commit()
         return {"ok": True, "notified": count, "count": count}
+
+    def deny_listing(self, admin_id: int, listing_id: int) -> dict[str, Any]:
+        admin = self.users.get_by_id(admin_id)
+        if admin is None or admin.role != "admin":
+            return {"ok": False, "error": "admin only"}
+        listing = self.listings.get(listing_id)
+        if listing is None:
+            return {"ok": False, "error": "listing not found"}
+        try:
+            listing.deny()
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        self.listings.save(listing)
+        self.unit_of_work.commit()
+        return {"ok": True, "listing_id": listing_id, "status": str(listing.status)}
+
+    def unpublish_listing(self, admin_id: int, listing_id: int) -> dict[str, Any]:
+        admin = self.users.get_by_id(admin_id)
+        if admin is None or admin.role != "admin":
+            return {"ok": False, "error": "admin only"}
+        listing = self.listings.get(listing_id)
+        if listing is None:
+            return {"ok": False, "error": "listing not found"}
+        try:
+            listing.unpublish()
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        self.listings.save(listing)
+        self.unit_of_work.commit()
+        return {"ok": True, "listing_id": listing_id, "status": str(listing.status)}
 
     def notify_subscribers(self, admin_id: int, listing_id: int) -> dict[str, Any]:
         admin = self.users.get_by_id(admin_id)

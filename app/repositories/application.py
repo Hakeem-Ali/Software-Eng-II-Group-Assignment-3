@@ -2,7 +2,11 @@
 
 from sqlmodel import Session, select
 
-from app.models.application import Application, ApplicationHistory
+from app.models.application import (
+    Application,
+    ApplicationHistory,
+    ApplicationStatus,
+)
 
 
 class ApplicationRepository:
@@ -29,6 +33,18 @@ class ApplicationRepository:
             .order_by(Application.id)
         ).all()
 
+    def active_for_applicant(self, graduate_id: int) -> list[Application]:
+        return self.db.exec(
+            select(Application)
+            .where(
+                Application.graduate_id == graduate_id,
+                Application.status.notin_(
+                    {ApplicationStatus.REJECTED, ApplicationStatus.HIRED}
+                ),
+            )
+            .order_by(Application.id)
+        ).all()
+
     def for_listing(self, listing_id: int) -> list[Application]:
         return self.db.exec(
             select(Application)
@@ -45,3 +61,12 @@ class ApplicationRepository:
         self.db.add(history)
         self.db.flush()
         return history
+
+    def history_for_application(
+        self, application_id: int
+    ) -> list[ApplicationHistory]:
+        return self.db.exec(
+            select(ApplicationHistory)
+            .where(ApplicationHistory.application_id == application_id)
+            .order_by(ApplicationHistory.occurred_at, ApplicationHistory.id)
+        ).all()

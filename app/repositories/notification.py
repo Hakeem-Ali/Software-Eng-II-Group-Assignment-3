@@ -19,7 +19,7 @@ class NotificationRepository:
         self.db.flush()
         return notifications
 
-    def for_user(self, user_id: int) -> list[Notification]:
+    def list_for_user(self, user_id: int) -> list[Notification]:
         return self.db.exec(
             select(Notification)
             .where(Notification.user_id == user_id)

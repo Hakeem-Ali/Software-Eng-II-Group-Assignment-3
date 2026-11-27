@@ -63,7 +63,7 @@ class ApplicationService:
             Notification(
                 user_id=application.graduate_id,
                 application_id=application.id,
-                message=f"Your application status changed to {application.status}",
+                text=f"Your application status changed to {application.status}",
                 channel=NotificationChannel.EMAIL,
             )
         )
@@ -119,6 +119,68 @@ class ApplicationService:
             row.model_dump(exclude={"cover_letter", "resume_text"})
             for row in rows
         ]
+
+    def my_active_applications(
+        self, graduate_id: int
+    ) -> dict[str, Any]:
+        graduate = self.users.get_by_id(graduate_id)
+        if graduate is None or graduate.role != "graduate":
+            return {"ok": False, "error": "graduates only"}
+        rows = self.applications.active_for_applicant(graduate_id)
+        return {
+            "ok": True,
+            "applications": [
+                row.model_dump(exclude={"cover_letter", "resume_text"})
+                for row in rows
+            ],
+        }
+
+    def read_application(
+        self, actor_id: int, application_id: int
+    ) -> dict[str, Any]:
+        actor = self.users.get_by_id(actor_id)
+        if actor is None:
+            return {"ok": False, "error": "unknown user"}
+        application = self.applications.get(application_id)
+        if application is None:
+            return {"ok": False, "error": "application not found"}
+
+        if actor.role == "admin":
+            authorized = True
+        elif actor.role == "graduate":
+            authorized = actor.id == application.graduate_id
+        elif actor.role == "employer":
+            listing = self.listings.get(application.listing_id)
+            authorized = ListingOwnerPolicy.can_read(
+                {"id": actor.id, "role": actor.role}, listing
+            )
+        else:
+            authorized = False
+
+        if not authorized:
+            return {"ok": False, "error": "forbidden"}
+        return {"ok": True, "application": application.model_dump()}
+
+    def application_history(
+        self, actor_id: int, application_id: int
+    ) -> dict[str, Any]:
+        actor = self.users.get_by_id(actor_id)
+        if actor is None:
+            return {"ok": False, "error": "unknown user"}
+        application = self.applications.get(application_id)
+        if application is None:
+            return {"ok": False, "error": "application not found"}
+        listing = self.listings.get(application.listing_id)
+        employer_can_read = ListingOwnerPolicy.can_read(
+            {"id": actor.id, "role": actor.role}, listing
+        )
+        if actor.role != "admin" and not employer_can_read:
+            return {"ok": False, "error": "forbidden"}
+        history = self.applications.history_for_application(application_id)
+        return {
+            "ok": True,
+            "history": [row.model_dump() for row in history],
+        }
 
     def listing_applicants(
         self, viewer_id: int, listing_id: int
@@ -185,10 +247,11 @@ class ApplicationService:
             return {"ok": False, "error": str(exc)}
         self.applications.save(application)
         self._record_status_change(application, old_status, action, actor_id)
+        application_data = application.model_dump()
         self.unit_of_work.commit()
         return {
             "ok": True,
-            "application": application.model_dump(),
+            "application": application_data,
             "changed": True,
         }
 
@@ -213,9 +276,10 @@ class ApplicationService:
             ApplicationAction.REOPEN,
             actor_id,
         )
+        application_data = application.model_dump()
         self.unit_of_work.commit()
         return {
             "ok": True,
-            "application": application.model_dump(),
+            "application": application_data,
             "changed": True,
         }

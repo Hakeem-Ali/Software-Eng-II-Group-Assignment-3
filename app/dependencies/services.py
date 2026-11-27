@@ -14,6 +14,7 @@ from app.repositories.user import UserRepository
 from app.services.applications import ApplicationService
 from app.services.board_auth import BoardAuthService
 from app.services.listings import ListingService
+from app.services.notifications import NotificationService
 
 
 def get_board_auth_service(
@@ -44,4 +45,13 @@ def get_application_service(
         notifications=NotificationRepository(session),
         export_audits=ExportAuditRepository(session),
         unit_of_work=SqlModelUnitOfWork(session),
+    )
+
+
+def get_notification_service(
+    session: Session = Depends(get_session),
+) -> NotificationService:
+    return NotificationService(
+        notifications=NotificationRepository(session),
+        users=UserRepository(session),
     )

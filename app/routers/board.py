@@ -38,6 +38,7 @@ def _status_for(error: str | None) -> int:
         return 403
     if (
         "illegal" in e
+        or "cannot " in e
         or "already submitted" in e
         or "not open" in e
         or "do not collect" in e
