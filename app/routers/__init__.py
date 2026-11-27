@@ -24,6 +24,14 @@ from . import (
     logout,
     server_config,
     board,
+    applications,
+    listings,
+    notifications,
+    subscriptions,
 )
 
 api_router.include_router(board.router)
+api_router.include_router(applications.router)
+api_router.include_router(listings.router)
+api_router.include_router(notifications.router)
+api_router.include_router(subscriptions.router)

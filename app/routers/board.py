@@ -12,54 +12,12 @@ from app.dependencies.services import (
     get_board_auth_service,
     get_listing_service,
 )
+from app.routers.errors import fail
 from app.services.applications import ApplicationService
 from app.services.board_auth import BoardAuthService
 from app.services.listings import ListingService
 
 router = APIRouter(tags=["job-board"])
-
-
-def _status_for(error: str | None) -> int:
-    """Map a service error message to the right HTTP status code."""
-    e = (error or "").lower()
-    if "not found" in e:
-        return 404
-    if "unknown user" in e:
-        return 401
-    if (
-        "admin only" in e
-        or "admin reopen only" in e
-        or "forbidden" in e
-        or "only the listing employer" in e
-        or "graduates only" in e
-        or "employers only" in e
-        or "only dcit" in e
-    ):
-        return 403
-    if (
-        "illegal" in e
-        or "cannot " in e
-        or "already submitted" in e
-        or "not open" in e
-        or "do not collect" in e
-    ):
-        return 409
-    if (
-        "use the admin reopen" in e
-        or "unknown application action" in e
-        or "apply_mode must" in e
-        or "external_url required" in e
-    ):
-        return 422
-    return 400
-
-
-def _fail(result: dict[str, Any]) -> HTTPException:
-    return HTTPException(
-        status_code=_status_for(result.get("error")),
-        detail=result.get("error"),
-    )
-
 
 
 class LoginBody(BaseModel):
@@ -113,7 +71,7 @@ def subscribe(
 ) -> dict[str, Any]:
     result = service.subscribe(body.actor_id)
     if not result.get("ok"):
-        raise _fail(result)
+        raise fail(result)
     return result
 
 
@@ -151,7 +109,7 @@ def submit_listing(
         body.external_url,
     )
     if not result.get("ok"):
-        raise _fail(result)
+        raise fail(result)
     return result
 
 
@@ -163,7 +121,7 @@ def publish(
 ) -> dict[str, Any]:
     result = service.publish_listing(body.actor_id, listing_id)
     if not result.get("ok"):
-        raise _fail(result)
+        raise fail(result)
     return result
 
 
@@ -175,7 +133,7 @@ def notify(
 ) -> dict[str, Any]:
     result = service.notify_subscribers(body.actor_id, listing_id)
     if not result.get("ok"):
-        raise _fail(result)
+        raise fail(result)
     return result
 
 
@@ -188,7 +146,7 @@ def apply(
         body.actor_id, body.listing_id, body.cover_letter, body.resume_text
     )
     if not result.get("ok"):
-        raise _fail(result)
+        raise fail(result)
     return result
 
 
@@ -208,7 +166,7 @@ def applicants(
 ) -> dict[str, Any]:
     result = service.listing_applicants(actor_id, listing_id)
     if not result.get("ok"):
-        raise _fail(result)
+        raise fail(result)
     return result
 
 
@@ -220,7 +178,7 @@ def export(
 ) -> dict[str, Any]:
     result = service.export_applicants(actor_id, listing_id)
     if not result.get("ok"):
-        raise _fail(result)
+        raise fail(result)
     return result
 
 
@@ -234,7 +192,7 @@ def transition(
         body.actor_id, application_id, body.action
     )
     if not result.get("ok"):
-        raise _fail(result)
+        raise fail(result)
     return result
 
 
@@ -246,5 +204,5 @@ def reopen_application(
 ) -> dict[str, Any]:
     result = service.reopen_application(body.actor_id, application_id)
     if not result.get("ok"):
-        raise _fail(result)
+        raise fail(result)
     return result
