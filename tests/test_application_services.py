@@ -12,6 +12,7 @@ from app.models.application import (
     ApplicationHistory,
     ApplicationStatus,
 )
+from app.models.export_audit import ExportAudit
 from app.models.notification import Notification, NotificationChannel
 
 
@@ -279,6 +280,48 @@ def test_non_dcit_graduate_cannot_apply(
     assert result["error"] == "only DCIT graduates may apply"
 
 
+def test_non_graduate_cannot_apply(application_context):
+    result = application_context["service"].apply(
+        application_context["employer_id"],
+        application_context["listing_id"],
+        "Test cover letter",
+    )
+
+    assert result == {"ok": False, "error": "graduates only"}
+
+
+def test_application_cannot_be_submitted_to_pending_listing(
+    application_context,
+):
+    with Session(application_context["engine"]) as session:
+        listing = Listing(
+            employer_id=application_context["employer_id"],
+            title="Pending Developer Position",
+            company="Test Company",
+            description="Not published yet",
+            apply_mode=ApplyMode.ON_PLATFORM_COLLECT,
+            deadline="2099-12-31",
+            status="pending",
+        )
+        session.add(listing)
+        session.commit()
+        session.refresh(listing)
+        listing_id = listing.id
+
+    result = application_context["service"].apply(
+        application_context["graduate_id"],
+        listing_id,
+        "Test cover letter",
+    )
+
+    assert result == {"ok": False, "error": "listing is not open"}
+    with Session(application_context["engine"]) as session:
+        applications = session.exec(
+            select(Application).where(Application.listing_id == listing_id)
+        ).all()
+        assert applications == []
+
+
 def test_external_link_listing_does_not_accept_applications(
     application_context,
 ):
@@ -371,3 +414,168 @@ def test_active_applications_exclude_rejected_and_hired(application_context):
     assert result["ok"]
     assert len(result["applications"]) == 1
     assert result["applications"][0]["status"] == "submitted"
+
+
+def test_apply_creates_application_using_graduate_resume_fallback(
+    application_context,
+):
+    with Session(application_context["engine"]) as session:
+        listing = Listing(
+            employer_id=application_context["employer_id"],
+            title="Another Developer Position",
+            company="Another Company",
+            description="Apply in platform",
+            apply_mode=ApplyMode.ON_PLATFORM_COLLECT,
+            deadline="2099-12-31",
+            status="published",
+        )
+        session.add(listing)
+        session.commit()
+        session.refresh(listing)
+        listing_id = listing.id
+
+    result = application_context["service"].apply(
+        application_context["graduate_id"],
+        listing_id,
+        "Cover letter",
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "submitted"
+    with Session(application_context["engine"]) as session:
+        application = session.exec(
+            select(Application).where(Application.listing_id == listing_id)
+        ).one()
+        assert application.graduate_id == application_context["graduate_id"]
+        assert application.cover_letter == "Cover letter"
+        assert application.resume_text == ""
+        assert application.status == ApplicationStatus.SUBMITTED
+
+
+def test_my_applications_omits_private_application_text(application_context):
+    result = application_context["service"].my_applications(
+        application_context["graduate_id"]
+    )
+
+    assert len(result) == 1
+    assert result[0]["id"] == application_context["application_id"]
+    assert "cover_letter" not in result[0]
+    assert "resume_text" not in result[0]
+
+
+def test_read_application_allows_owner_and_admin_but_denies_other_employer(
+    application_context,
+):
+    service = application_context["service"]
+
+    owner_result = service.read_application(
+        application_context["graduate_id"],
+        application_context["application_id"],
+    )
+    employer_result = service.read_application(
+        application_context["employer_id"],
+        application_context["application_id"],
+    )
+    admin_result = service.read_application(
+        application_context["admin_id"],
+        application_context["application_id"],
+    )
+    denied_result = service.read_application(
+        application_context["other_employer_id"],
+        application_context["application_id"],
+    )
+
+    assert owner_result["ok"] is True
+    assert employer_result["ok"] is True
+    assert admin_result["ok"] is True
+    assert denied_result == {"ok": False, "error": "forbidden"}
+
+
+def test_listing_applicants_is_restricted_to_listing_employer(
+    application_context,
+):
+    service = application_context["service"]
+
+    allowed = service.listing_applicants(
+        application_context["employer_id"],
+        application_context["listing_id"],
+    )
+    denied = service.listing_applicants(
+        application_context["other_employer_id"],
+        application_context["listing_id"],
+    )
+
+    assert allowed["ok"] is True
+    assert len(allowed["applicants"]) == 1
+    assert denied == {"ok": False, "error": "forbidden"}
+
+
+def test_admin_export_records_audit_and_returns_applicants(
+    application_context,
+):
+    result = application_context["service"].export_applicants(
+        application_context["admin_id"],
+        application_context["listing_id"],
+    )
+
+    assert result["ok"] is True
+    assert result["format"] == "json"
+    assert len(result["package"]) == 1
+    assert result["package"][0]["id"] == application_context["application_id"]
+    with Session(application_context["engine"]) as session:
+        audit = session.exec(select(ExportAudit)).one()
+        assert audit.admin_id == application_context["admin_id"]
+        assert audit.listing_id == application_context["listing_id"]
+        assert audit.applicant_count == 1
+
+
+def test_non_admin_cannot_export_applicants(application_context):
+    result = application_context["service"].export_applicants(
+        application_context["employer_id"],
+        application_context["listing_id"],
+    )
+
+    assert result == {"ok": False, "error": "admin only"}
+    with Session(application_context["engine"]) as session:
+        assert session.exec(select(ExportAudit)).all() == []
+
+
+@pytest.mark.parametrize(
+    ("action", "expected_error"),
+    [
+        ("reopen", "use the admin reopen operation"),
+        ("shortlist", "shortlist is illegal from submitted"),
+        ("unknown", "use the admin reopen operation"),
+    ],
+)
+def test_transition_application_rejects_invalid_action_without_side_effects(
+    application_context,
+    action,
+    expected_error,
+):
+    result = application_context["service"].transition_application(
+        application_context["employer_id"],
+        application_context["application_id"],
+        action,
+    )
+
+    assert result == {"ok": False, "error": expected_error}
+    with Session(application_context["engine"]) as session:
+        application = session.get(
+            Application,
+            application_context["application_id"],
+        )
+        history = session.exec(select(ApplicationHistory)).all()
+        notifications = session.exec(select(Notification)).all()
+        assert application.status == ApplicationStatus.SUBMITTED
+        assert history == []
+        assert notifications == []
+
+
+def test_reopen_application_is_admin_only(application_context):
+    result = application_context["service"].reopen_application(
+        application_context["employer_id"],
+        application_context["application_id"],
+    )
+
+    assert result == {"ok": False, "error": "admin reopen only"}
