@@ -20,30 +20,47 @@ from app.services.listings import ListingService
 from app.services.lifecycle import ListingOwnerPolicy
 
 
-@pytest.mark.parametrize(
-    "status",
-    [ListingStatus.DENIED, ListingStatus.UNPUBLISHED],
-)
-def test_publish_listing_returns_error_for_non_pending_listing(status):
-    listing = Listing(
+def _make_listing_for_publish(
+    status=ListingStatus.PENDING,
+    apply_mode=ApplyMode.ON_PLATFORM_COLLECT,
+):
+    return Listing(
         employer_id=2,
         title="Junior Developer",
         company="Test Company",
         description="Test listing",
-        apply_mode=ApplyMode.ON_PLATFORM_COLLECT,
+        apply_mode=apply_mode,
         deadline="2099-12-31",
         status=status,
     )
+
+
+def _make_publish_service(listing, admin):
     users = Mock()
-    users.get_by_id.return_value = SimpleNamespace(role="admin")
+    users.get_by_id.return_value = admin
     listings = Mock()
     listings.get.return_value = listing
+    unit_of_work = Mock()
     service = ListingService(
         listings=listings,
         subscriptions=Mock(),
         notifications=Mock(),
         users=users,
-        unit_of_work=Mock(),
+        unit_of_work=unit_of_work,
+    )
+    service._create_listing_notifications = Mock(return_value=2)
+    return service, users, listings, unit_of_work
+
+
+@pytest.mark.parametrize(
+    "status",
+    [ListingStatus.DENIED, ListingStatus.UNPUBLISHED],
+)
+def test_publish_listing_returns_error_for_non_pending_listing(status):
+    listing = _make_listing_for_publish(status=status)
+    service, _, listings, unit_of_work = _make_publish_service(
+        listing,
+        admin=SimpleNamespace(role="admin"),
     )
 
     result = service.publish_listing(admin_id=1, listing_id=3)
@@ -53,6 +70,86 @@ def test_publish_listing_returns_error_for_non_pending_listing(status):
         "error": f"cannot publish listing with status {status}",
     }
     listings.save.assert_not_called()
+    service._create_listing_notifications.assert_not_called()
+    unit_of_work.commit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("apply_mode", "expected_count"),
+    [
+        (ApplyMode.ON_PLATFORM_COLLECT, 2),
+        (ApplyMode.EXTERNAL_LINK, 0),
+    ],
+)
+def test_publish_listing_publishes_pending_listing(apply_mode, expected_count):
+    listing = _make_listing_for_publish(apply_mode=apply_mode)
+    service, _, listings, unit_of_work = _make_publish_service(
+        listing,
+        admin=SimpleNamespace(role="admin"),
+    )
+
+    result = service.publish_listing(admin_id=1, listing_id=3)
+
+    assert result == {
+        "ok": True,
+        "notified": expected_count,
+        "count": expected_count,
+    }
+    assert listing.status == ListingStatus.PUBLISHED
+    listings.save.assert_called_once_with(listing)
+    unit_of_work.commit.assert_called_once_with()
+    if apply_mode == ApplyMode.ON_PLATFORM_COLLECT:
+        service._create_listing_notifications.assert_called_once_with(listing)
+    else:
+        service._create_listing_notifications.assert_not_called()
+
+
+def test_publish_listing_is_idempotent_for_published_listing():
+    listing = _make_listing_for_publish(status=ListingStatus.PUBLISHED)
+    service, _, listings, unit_of_work = _make_publish_service(
+        listing,
+        admin=SimpleNamespace(role="admin"),
+    )
+
+    result = service.publish_listing(admin_id=1, listing_id=3)
+
+    assert result == {"ok": True, "notified": 0, "count": 0}
+    listings.save.assert_not_called()
+    service._create_listing_notifications.assert_not_called()
+    unit_of_work.commit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "admin",
+    [None, SimpleNamespace(role="employer")],
+)
+def test_publish_listing_rejects_non_admin(admin):
+    service, _, listings, unit_of_work = _make_publish_service(
+        _make_listing_for_publish(),
+        admin=admin,
+    )
+
+    result = service.publish_listing(admin_id=1, listing_id=3)
+
+    assert result == {"ok": False, "error": "admin only"}
+    listings.get.assert_not_called()
+    listings.save.assert_not_called()
+    service._create_listing_notifications.assert_not_called()
+    unit_of_work.commit.assert_not_called()
+
+
+def test_publish_listing_returns_error_when_listing_is_missing():
+    service, _, listings, unit_of_work = _make_publish_service(
+        None,
+        admin=SimpleNamespace(role="admin"),
+    )
+
+    result = service.publish_listing(admin_id=1, listing_id=3)
+
+    assert result == {"ok": False, "error": "listing not found"}
+    listings.save.assert_not_called()
+    service._create_listing_notifications.assert_not_called()
+    unit_of_work.commit.assert_not_called()
 
 
 def test_password_hash_round_trip_and_rejects_wrong_password():
