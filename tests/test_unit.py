@@ -14,6 +14,7 @@ from app.models.application import (
 )
 from app.models.listing import ApplyMode, Listing
 from app.models.user import User
+from app.repositories.listing import ListingRepository
 from app.services.lifecycle import ListingOwnerPolicy
 
 
@@ -223,3 +224,40 @@ def test_entity_enum_fields_reject_stringly_typed_values():
     assert isinstance(application.status, ApplicationStatus)
     assert listing.apply_mode.value == "on-platform-collect"
     assert listing.status.value == "pending"
+
+
+def test_listing_repository_returns_all_listings_for_employer(test_session):
+    test_session.add_all(
+        [
+            Listing(
+                employer_id=12,
+                title="First",
+                company="Company",
+                description="First listing",
+                apply_mode="on-platform-collect",
+                deadline="2099-12-31",
+            ),
+            Listing(
+                employer_id=12,
+                title="Second",
+                company="Company",
+                description="Second listing",
+                apply_mode="external-link",
+                external_url="https://example.com/apply",
+                deadline="2099-12-31",
+            ),
+            Listing(
+                employer_id=34,
+                title="Other employer",
+                company="Other",
+                description="Not owned by employer 12",
+                apply_mode="on-platform-collect",
+                deadline="2099-12-31",
+            ),
+        ]
+    )
+    test_session.commit()
+
+    listings = ListingRepository(test_session).for_employer(12)
+
+    assert [listing.title for listing in listings] == ["First", "Second"]

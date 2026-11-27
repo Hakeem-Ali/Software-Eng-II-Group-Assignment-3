@@ -15,6 +15,13 @@ class ListingRepository:
     def for_graduates(self) -> list[Listing]:
         return self.db.exec(select(Listing).order_by(Listing.id)).all()
 
+    def for_employer(self, employer_id: int) -> list[Listing]:
+        return self.db.exec(
+            select(Listing)
+            .where(Listing.employer_id == employer_id)
+            .order_by(Listing.id)
+        ).all()
+
     def pending_for_admin(self) -> list[Listing]:
         return self.db.exec(
             select(Listing)
