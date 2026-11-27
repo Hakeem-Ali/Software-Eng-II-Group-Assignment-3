@@ -16,7 +16,7 @@ from app.models.notification import Notification, NotificationChannel
 
 
 @pytest.fixture
-def application_context(monkeypatch):
+def application_context():
     test_engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -24,13 +24,6 @@ def application_context(monkeypatch):
     )
 
     SQLModel.metadata.create_all(test_engine)
-
-    monkeypatch.setattr(
-        "app.services.applications.engine", test_engine
-    )
-    monkeypatch.setattr(
-        "app.services.board_auth.engine", test_engine
-    )
 
     with Session(test_engine) as session:
         graduate = User(
@@ -106,8 +99,26 @@ def application_context(monkeypatch):
             "application_id": application.id,
         }
 
+    service_session = Session(test_engine)
+    from app.repositories.application import ApplicationRepository
+    from app.repositories.export_audit import ExportAuditRepository
+    from app.repositories.listing import ListingRepository
+    from app.repositories.notification import NotificationRepository
+    from app.repositories.unit_of_work import SqlModelUnitOfWork
+    from app.repositories.user import UserRepository
+    from app.services.applications import ApplicationService
+
+    context["service"] = ApplicationService(
+        applications=ApplicationRepository(service_session),
+        listings=ListingRepository(service_session),
+        users=UserRepository(service_session),
+        notifications=NotificationRepository(service_session),
+        export_audits=ExportAuditRepository(service_session),
+        unit_of_work=SqlModelUnitOfWork(service_session),
+    )
     yield context
 
+    service_session.close()
     SQLModel.metadata.drop_all(test_engine)
     test_engine.dispose()
 
@@ -115,9 +126,7 @@ def application_context(monkeypatch):
 def test_status_change_creates_history_and_notification(
     application_context,
 ):
-    from app.services.applications import transition_application
-
-    result = transition_application(
+    result = application_context["service"].transition_application(
         application_context["employer_id"],
         application_context["application_id"],
         "mark_reviewed",
@@ -146,15 +155,13 @@ def test_status_change_creates_history_and_notification(
         assert notifications[0].user_id == application_context["graduate_id"]
         assert notifications[0].application_id == application_context["application_id"]
         assert notifications[0].channel == NotificationChannel.EMAIL
-        assert "reviewed" in notifications[0].message.lower()
+        assert "reviewed" in notifications[0].text.lower()
 
 
 def test_other_employer_cannot_change_application(
     application_context,
 ):
-    from app.services.applications import transition_application
-
-    result = transition_application(
+    result = application_context["service"].transition_application(
         application_context["other_employer_id"],
         application_context["application_id"],
         "mark_reviewed",
@@ -185,8 +192,6 @@ def test_other_employer_cannot_change_application(
 def test_admin_reopening_creates_history_and_notification(
     application_context,
 ):
-    from app.services.applications import reopen_application
-
     with Session(application_context["engine"]) as session:
         application = session.get(
             Application,
@@ -196,7 +201,7 @@ def test_admin_reopening_creates_history_and_notification(
         session.add(application)
         session.commit()
 
-    result = reopen_application(
+    result = application_context["service"].reopen_application(
         application_context["admin_id"],
         application_context["application_id"],
     )
@@ -229,9 +234,7 @@ def test_admin_reopening_creates_history_and_notification(
 def test_graduate_cannot_submit_duplicate_application(
     application_context,
 ):
-    from app.services.applications import apply
-
-    result = apply(
+    result = application_context["service"].apply(
         application_context["graduate_id"],
         application_context["listing_id"],
         "Another cover letter",
@@ -251,8 +254,6 @@ def test_graduate_cannot_submit_duplicate_application(
 def test_non_dcit_graduate_cannot_apply(
     application_context,
 ):
-    from app.services.applications import apply
-
     with Session(application_context["engine"]) as session:
         graduate = User(
             username="other_graduate",
@@ -268,7 +269,7 @@ def test_non_dcit_graduate_cannot_apply(
 
         graduate_id = graduate.id
 
-    result = apply(
+    result = application_context["service"].apply(
         graduate_id,
         application_context["listing_id"],
         "Test cover letter",
@@ -281,8 +282,6 @@ def test_non_dcit_graduate_cannot_apply(
 def test_external_link_listing_does_not_accept_applications(
     application_context,
 ):
-    from app.services.applications import apply
-
     with Session(application_context["engine"]) as session:
         listing = Listing(
             employer_id=application_context["employer_id"],
@@ -300,7 +299,7 @@ def test_external_link_listing_does_not_accept_applications(
 
         listing_id = listing.id
 
-    result = apply(
+    result = application_context["service"].apply(
         application_context["graduate_id"],
         listing_id,
         "Test cover letter",
@@ -311,9 +310,64 @@ def test_external_link_listing_does_not_accept_applications(
 
     with Session(application_context["engine"]) as session:
         applications = session.exec(
-            select(Application).where(
-                Application.listing_id == listing_id
-            )
+            select(Application).where(Application.listing_id == listing_id)
         ).all()
-
         assert len(applications) == 0
+
+
+def test_application_history_is_employer_or_admin_only(application_context):
+    service = application_context["service"]
+    transition = service.transition_application(
+        application_context["employer_id"],
+        application_context["application_id"],
+        "mark_reviewed",
+    )
+    assert transition["ok"]
+
+    history = service.application_history(
+        application_context["employer_id"],
+        application_context["application_id"],
+    )
+    denied = service.application_history(
+        application_context["graduate_id"],
+        application_context["application_id"],
+    )
+    admin_history = service.application_history(
+        application_context["admin_id"],
+        application_context["application_id"],
+    )
+
+    assert history["ok"]
+    assert len(history["history"]) == 1
+    assert history["history"][0]["from_status"] == "submitted"
+    assert denied == {"ok": False, "error": "forbidden"}
+    assert admin_history["ok"]
+
+
+def test_active_applications_exclude_rejected_and_hired(application_context):
+    service = application_context["service"]
+    graduate_id = application_context["graduate_id"]
+
+    with Session(application_context["engine"]) as session:
+        rejected = Application(
+            listing_id=application_context["listing_id"],
+            graduate_id=graduate_id,
+            cover_letter="Rejected applicant",
+            resume_text="Resume",
+            status=ApplicationStatus.REJECTED,
+        )
+        hired = Application(
+            listing_id=application_context["listing_id"],
+            graduate_id=graduate_id,
+            cover_letter="Hired applicant",
+            resume_text="Resume",
+            status=ApplicationStatus.HIRED,
+        )
+        session.add_all([rejected, hired])
+        session.commit()
+
+    result = service.my_active_applications(graduate_id)
+
+    assert result["ok"]
+    assert len(result["applications"]) == 1
+    assert result["applications"][0]["status"] == "submitted"
